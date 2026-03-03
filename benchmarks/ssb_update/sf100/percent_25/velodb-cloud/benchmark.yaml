@@ -7,7 +7,7 @@ engine:
     fe_host: "${FE_HOST:-127.0.0.1}"
     fe_http_port: "${FE_HTTP_PORT:-8030}"
     fe_query_port: "${FE_QUERY_PORT:-9030}"
-    user: "root"
+    user: "${USER:-root}"
     password: "${PASSWORD:-}"
     db: "${DB:-ssb}"
 

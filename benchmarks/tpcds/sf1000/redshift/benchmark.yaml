@@ -6,7 +6,7 @@ engine:
   connection:
     host: "${HOST:-127.0.0.1}" # redshift host
     port: "${PORT:-5439}" # redshift port
-    user: "awsuser" # redshift username
+    user: "${USER:-awsuser}" # redshift username
     password: "${PASSWORD:-}" # redshift password
     db: "${DB:-dev}" # redshift database name
     schema: "${SCHEMA:-tpcds}" # redshift schema name
