@@ -129,7 +129,7 @@ s3://bench-dataset/clickhouse
 
 OSS  
 oss-cn-beijing  
-s3://qa-build/performance/data/clickbench
+s3://bench-dataset/clickhouse
 
 ##### TPC-DS
 
@@ -140,7 +140,7 @@ s3://bench-dataset/tpcds/sf1000
 
 OSS  
 oss-cn-beijing  
-s3://qa-build/performance/data/tpcds_sf1000
+s3://bench-dataset/tpcds/sf1000
 
 Test SQL
 
@@ -160,7 +160,7 @@ s3://bench-dataset/tpch/sf1000
 
 OSS  
 oss-cn-beijing  
-s3://qa-build/performance/data/tpch_sf1000
+s3://bench-dataset/tpch/sf1000
 
 Test SQL
 
@@ -180,7 +180,7 @@ s3://bench-dataset/ssb/sf1000
 
 OSS  
 oss-cn-beijing  
-s3://qa-build/performance/data/ssb_sf1000
+s3://bench-dataset/ssb/sf1000
 
 Test SQL
 
