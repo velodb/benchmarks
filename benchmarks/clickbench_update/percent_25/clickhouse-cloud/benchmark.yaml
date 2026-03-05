@@ -5,7 +5,7 @@ engine:
   type: "clickhouse"
   connection:
     clickhouse_host: "${CLICKHOUSE_HOST:-xxx.clickhouse.cloud}"
-    user: "default"
+    user: "${USER:-default}"
     password: "${PASSWORD:-}"
     db: "${DB:-default}"
 

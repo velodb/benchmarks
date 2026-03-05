@@ -8,7 +8,7 @@ engine:
     fe_host: "${FE_HOST:-127.0.0.1}"
     fe_http_port: "${FE_HTTP_PORT:-8030}"
     fe_query_port: "${FE_QUERY_PORT:-9030}"
-    user: "admin"
+    user: "${USER:-admin}"
     password: "${PASSWORD:-}"
     db: "${DB:-amazon_reviews_indexed}"
 
@@ -29,7 +29,7 @@ parameters:
 paths:
   ddl: "ddl/ddl.sql"
   session: "session/session.sql"
-  analyze: "analyze/analyze.sql"
+  analyze: "${ANALYZE_FILE:-analyze/analyze.sql}"
   load_dir: "load/"
   query_mode: "line"
   query_dirs:

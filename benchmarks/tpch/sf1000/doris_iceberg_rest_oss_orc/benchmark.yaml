@@ -7,7 +7,7 @@ engine:
     fe_host: "${FE_HOST:-127.0.0.1}" # Doris Frontend host
     fe_http_port: "${FE_HTTP_PORT:-8030}" # HTTP port for Doris Frontend
     fe_query_port: "${FE_QUERY_PORT:-9030}" # Query port for Doris Frontend
-    user: "root" # Doris username
+    user: "${USER:-root}" # Doris username
     password: "${PASSWORD:-}" # Doris password
     catalog: "${CATALOG:-iceberg_nessie}" # Doris catalog name
     db: "${DB:-tpch_sf1000_orc}" # Doris database name
