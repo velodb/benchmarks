@@ -189,7 +189,6 @@ load_config() {
 # Load storage configuration from benchmark.yaml
 # Each benchmark.yaml contains its own storage config (endpoint, region, bucket).
 # All fields support environment variable overrides via ${VAR:-default} syntax.
-# STORAGE_PREFIX is auto-computed from the benchmark directory path.
 load_storage_config() {
     echo "Loading storage configuration..."
 
@@ -212,21 +211,7 @@ load_storage_config() {
     export STORAGE_REGION=$(eval echo "$raw_region")
     export STORAGE_BUCKET=$(eval echo "$raw_bucket")
 
-    # 3. Auto-compute STORAGE_PREFIX from the benchmark directory path
-    #    e.g., benchmarks/ssb/sf100/doris/benchmark.yaml -> ssb/sf100
-    #    e.g., benchmarks/clickbench/doris/benchmark.yaml -> clickbench
-    local config_dir
-    config_dir=$(dirname "$CONFIG_FILE")
-    # Remove the leading path up to and including "benchmarks/"
-    local rel_path="${config_dir#*benchmarks/}"
-    # Remove the trailing engine directory (doris/, velodb/, clickhouse/, etc.)
-    export STORAGE_PREFIX="${rel_path%/*}"
-    # If no slash remains (single-level like "clickbench/doris" -> "clickbench"), keep as is
-    if [ "$STORAGE_PREFIX" = "$rel_path" ]; then
-        export STORAGE_PREFIX="$rel_path"
-    fi
-
-    echo "Storage: endpoint=$STORAGE_ENDPOINT bucket=$STORAGE_BUCKET prefix=$STORAGE_PREFIX"
+    echo "Storage: endpoint=$STORAGE_ENDPOINT bucket=$STORAGE_BUCKET"
 }
 
 # Load database engine
@@ -351,16 +336,18 @@ run_load() {
             fi
         elif [[ "$load_file" == *.sql ]]; then
             # Pre-process SQL using envsubst to inject STORAGE_* configs
-            local tmp_sql="$RESULT_DIR/.tmp_load_${table_name}.sql"
+            local tmp_sql="/tmp/.tmp_load_${table_name}_$$.sql"
             envsubst < "$load_file" > "$tmp_sql"
             
             if ! engine_run_sql_file "$tmp_sql"; then
                 rm -f "$tmp_sql"
-                die "Failed to execute load SQL file: $load_file (via $tmp_sql)"
+                die "Failed to execute load SQL file: $load_file"
             fi
+            
+            # Clean up the temporary injected SQL file after execution
             rm -f "$tmp_sql"
         else
-            echo "Skipping unknown test file format: $load_file"
+            echo "Skipping unknown file type: $load_file"
         fi
         
         local end_time
@@ -572,8 +559,10 @@ run_query() {
 
 run_analyze() {
     echo "Running analysis..."
+    local raw_analyze_sql
+    raw_analyze_sql=$(yq eval '.paths.analyze // "analyze/analyze.sql"' "$CONFIG_FILE")
     local analyze_sql
-    analyze_sql=$(yq eval '.paths.analyze // "analyze/analyze.sql"' "$CONFIG_FILE")
+    analyze_sql="$(eval echo "$raw_analyze_sql")"
     
     if [[ "$analyze_sql" != /* ]]; then
         analyze_sql="$TEST_ROOT/$analyze_sql"
