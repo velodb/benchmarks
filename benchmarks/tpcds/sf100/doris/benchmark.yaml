@@ -29,7 +29,7 @@ paths:
   ddl: "ddl/ddl.sql" # DDL setup file
   session: "session/session.sql" # Session setup file
   analyze: "${ANALYZE_FILE:-analyze/analyze.sql}" # Analyze statistics file
-  load_dir: "load_local/" # Directory containing data loading scripts (local Stream Load)
+  load_dir: "load/" # Directory containing data loading scripts (local Stream Load)
   query_mode: "file" # Query file format: "line" (each line is a query) or "file" (entire file is one query)
   query_dirs: # Query directories to test
     - "query/" # TPC-DS queries
