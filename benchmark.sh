@@ -268,9 +268,14 @@ run_ddl() {
     
     echo "Running DDL."
     
-    if ! engine_run_sql_file "$ddl_path"; then
+    # Keep DDL behavior consistent with load phase so ${STORAGE_*} works in DDL SQL.
+    local tmp_sql="/tmp/.tmp_ddl_$$.sql"
+    envsubst < "$ddl_path" > "$tmp_sql"
+    if ! engine_run_sql_file "$tmp_sql"; then
+        rm -f "$tmp_sql"
         die "DDL setup failed"
     fi
+    rm -f "$tmp_sql"
 }
 
 run_session() {
@@ -286,7 +291,8 @@ run_session() {
         return 0
     fi
     echo "Running set session."
-    local session_content=$(cat "$session_path")
+    local session_content
+    session_content=$(envsubst < "$session_path")
     if ! engine_run_sql "" "$session_content"; then
         die "Setup session failed"
     fi
@@ -422,7 +428,7 @@ run_query() {
                     local full_query_name="${prefix}q${query_counter}"
                     # Add to queries array: query_name and sql_content separately
                     all_query_names+=("$full_query_name")
-                    all_query_sqls+=("$line")
+                    all_query_sqls+=("$(printf '%s' "$line" | envsubst)")
                     
                     ((query_counter++))
                 done < "$query_file"
@@ -432,7 +438,7 @@ run_query() {
                 
                 # Read and escape SQL content
                 local sql_content
-                sql_content=$(cat "$query_file")
+                sql_content=$(envsubst < "$query_file")
                 
                 # Add to queries array: query_name and sql_content separately
                 all_query_names+=("$full_query_name")
@@ -574,9 +580,14 @@ run_analyze() {
     fi
     
     
-    if engine_run_sql_file "$analyze_sql"; then
+    local tmp_sql="/tmp/.tmp_analyze_$$.sql"
+    envsubst < "$analyze_sql" > "$tmp_sql"
+
+    if engine_run_sql_file "$tmp_sql"; then
+        rm -f "$tmp_sql"
         echo "Analysis completed"
     else
+        rm -f "$tmp_sql"
         die "Analysis failed"
     fi
 }

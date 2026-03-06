@@ -1,1 +1,1 @@
-INSERT INTO call_center SELECT * FROM s3('s3://bench-dataset/tpcds/sf1000/call_center/*', NOSIGN, CSV) SETTINGS format_csv_delimiter = '|', input_format_defaults_for_omitted_fields = 1, input_format_csv_empty_as_default = 1, output_format_parquet_compression_method = 'gzip';
+INSERT INTO call_center SELECT * FROM s3('s3://${STORAGE_BUCKET}/tpcds/sf1000/call_center/*', NOSIGN, CSV) SETTINGS format_csv_delimiter = '|', input_format_defaults_for_omitted_fields = 1, input_format_csv_empty_as_default = 1, output_format_parquet_compression_method = 'gzip';

@@ -30,3 +30,8 @@ paths:
   query_mode: "line" # Query file format: "line" (each line is a query) or "file" (entire file is one query)
   query_dirs: # Query directories to test
     - "query/" # ClickBench queries
+
+storage:
+  endpoint: "${STORAGE_ENDPOINT:-https://s3.us-east-1.amazonaws.com}"
+  region: "${STORAGE_REGION:-us-east-1}"
+  bucket: "${STORAGE_BUCKET:-bench-dataset}"

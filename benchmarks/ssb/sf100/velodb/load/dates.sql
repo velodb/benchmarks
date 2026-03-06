@@ -1,7 +1,7 @@
 INSERT INTO dates (
     d_datekey,d_date,d_dayofweek,d_month,d_year,d_yearmonthnum,d_yearmonth,d_daynuminweek,d_daynuminmonth,d_daynuminyear,d_monthnuminyear,d_weeknuminyear,d_sellingseason,d_lastdayinweekfl,d_lastdayinmonthfl,d_holidayfl,d_weekdayfl
 ) SELECT * FROM S3 (
-        "uri" = "s3://${STORAGE_BUCKET}/ssb/sf100/*",
+        "uri" = "s3://${STORAGE_BUCKET}/ssb/sf100/date/*",
         "format" = "csv",
         "s3.endpoint" = "${STORAGE_ENDPOINT}",
         "s3.region" = "${STORAGE_REGION}",

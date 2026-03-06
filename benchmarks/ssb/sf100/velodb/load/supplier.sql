@@ -2,7 +2,7 @@ INSERT INTO supplier (
     s_suppkey,s_name,s_address,s_city,s_nation,s_region,s_phone
 )
 SELECT * FROM S3 (
-        "uri" = "s3://${STORAGE_BUCKET}/ssb/sf100/*",
+        "uri" = "s3://${STORAGE_BUCKET}/ssb/sf100/supplier/*",
         "format" = "csv",
         "s3.endpoint" = "${STORAGE_ENDPOINT}",
         "s3.region" = "${STORAGE_REGION}",

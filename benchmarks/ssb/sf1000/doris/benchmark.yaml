@@ -34,6 +34,6 @@ paths:
   query_dirs: # Query directories to test (SSB uses a single queries.sql file)
     - "query/" # SSB queries
 storage:
-  endpoint: "${STORAGE_ENDPOINT:-https://oss-cn-beijing-internal.aliyuncs.com}"
-  region: "${STORAGE_REGION:-oss-cn-beijing}"
-  bucket: "${STORAGE_BUCKET:-bench-dataset-cn}"
+  endpoint: "${STORAGE_ENDPOINT:-https://s3.us-east-1.amazonaws.com}"
+  region: "${STORAGE_REGION:-us-east-1}"
+  bucket: "${STORAGE_BUCKET:-bench-dataset}"

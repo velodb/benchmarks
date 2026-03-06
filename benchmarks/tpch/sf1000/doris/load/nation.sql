@@ -1,5 +1,5 @@
 INSERT INTO nation (n_nationkey, n_name, n_regionkey, n_comment) SELECT c1, c2, c3, c4 FROM S3(
-    "uri" = "s3://${STORAGE_BUCKET}/tpch/sf1000/nation/*.gz",
+    "uri" = "s3://${STORAGE_BUCKET}/performance/data/tpch_sf1000/nation.tbl.gz",
     "format" = "csv",
     "s3.endpoint" = "${STORAGE_ENDPOINT}",
     "s3.region" = "${STORAGE_REGION}",

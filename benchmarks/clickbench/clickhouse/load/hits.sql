@@ -1,1 +1,1 @@
-INSERT INTO hits SELECT * FROM s3('s3://bench-dataset/clickhouse/hits_compatible/hits_split*.tsv', NOSIGN, TSV) SETTINGS format_csv_delimiter = '\t', input_format_defaults_for_omitted_fields = 1, input_format_csv_empty_as_default = 1;
+INSERT INTO hits SELECT * FROM s3('s3://${STORAGE_BUCKET}/clickhouse/hits_compatible/hits_split*.tsv', NOSIGN, TSV) SETTINGS format_csv_delimiter = '\t', input_format_defaults_for_omitted_fields = 1, input_format_csv_empty_as_default = 1;

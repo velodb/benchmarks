@@ -1,1 +1,1 @@
-INSERT INTO nation SELECT * FROM s3('s3://bench-dataset/tpch/sf100/nation/*', NOSIGN, CSV) SETTINGS format_csv_delimiter = '|', input_format_defaults_for_omitted_fields = 1, input_format_csv_empty_as_default = 1;
+INSERT INTO nation SELECT * FROM s3('s3://${STORAGE_BUCKET}/tpch/sf100/nation/*', NOSIGN, CSV) SETTINGS format_csv_delimiter = '|', input_format_defaults_for_omitted_fields = 1, input_format_csv_empty_as_default = 1;
