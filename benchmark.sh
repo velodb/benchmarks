@@ -71,45 +71,6 @@ die() {
     exit 1
 }
 
-
-# Minimal placeholder expansion used by benchmark.yaml values.
-# Supported forms: ${VAR}, ${VAR-default}, ${VAR:-default}
-expand_template_value() {
-    local input="$1"
-    local var_name=""
-    local default_value=""
-
-    if [[ "$input" =~ ^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$ ]]; then
-        var_name="${BASH_REMATCH[1]}"
-        printf '%s\n' "${!var_name:-}"
-        return 0
-    fi
-
-    if [[ "$input" =~ ^\$\{([A-Za-z_][A-Za-z0-9_]*)-([^}]*)\}$ ]]; then
-        var_name="${BASH_REMATCH[1]}"
-        default_value="${BASH_REMATCH[2]}"
-        if [[ -v "$var_name" ]]; then
-            printf '%s\n' "${!var_name}"
-        else
-            printf '%s\n' "$default_value"
-        fi
-        return 0
-    fi
-
-    if [[ "$input" =~ ^\$\{([A-Za-z_][A-Za-z0-9_]*):-([^}]*)\}$ ]]; then
-        var_name="${BASH_REMATCH[1]}"
-        default_value="${BASH_REMATCH[2]}"
-        if [ -n "${!var_name:-}" ]; then
-            printf '%s\n' "${!var_name}"
-        else
-            printf '%s\n' "$default_value"
-        fi
-        return 0
-    fi
-
-    printf '%s\n' "$input"
-}
-
 # Check dependencies
 # TODO(zgx): move this function to lib dir and install all dependencies
 check_dependencies() {
@@ -231,14 +192,14 @@ load_config() {
     # Export connection and parameters
     for section in "engine.connection" "parameters"; do
         while IFS='=' read -r key value; do
-            [ -n "$key" ] && [ -n "$value" ] && export "$key=$(expand_template_value "$value")"
+            [ -n "$key" ] && [ -n "$value" ] && export "$key=$(eval echo "$value")"
         done < <(yq eval ".$section // {} | to_entries | .[] | .key + \"=\" + .value" "$CONFIG_FILE")
     done
 
     # Export paths (scalar values only)
     for key in ddl session load_dir analyze query_mode; do
         value=$(yq eval ".paths.$key // \"\"" "$CONFIG_FILE")
-        [ -n "$value" ] && [ "$value" != "null" ] && export "$key=$(expand_template_value "$value")"
+        [ -n "$value" ] && [ "$value" != "null" ] && export "$key=$(eval echo "$value")"
     done
 
     # Set TEST_ROOT for engine access
