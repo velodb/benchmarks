@@ -29,7 +29,7 @@ Our goal is to build `benchmarks.velodb.com` into the industry's most trusted an
 ## Quick Start
 
 ### Dependencies
-- yq, jq, bc
+- yq, jq, bc, envsubst, maketemp
 - [Jmeter](https://jmeter.apache.org) (optional, only needed for running JMeter tests)
 
 ### Benchmark Workflow
@@ -124,23 +124,31 @@ Refer to [ClickBench](https://github.com/ClickHouse/ClickBench)
 
 Test set locations:  
 S3  
-us-east-1  
-s3://bench-dataset/clickhouse
+endpoint: https://s3.us-east-1.amazonaws.com  
+region: us-east-1  
+bucket: bench-dataset  
+location: s3://bench-dataset/clickhouse
 
 OSS  
-oss-cn-beijing  
-s3://qa-build/performance/data/clickbench
+endpoint: https://oss-cn-beijing.aliyuncs.com  
+region: oss-cn-beijing  
+bucket: bench-dataset  
+location: s3://bench-dataset/clickhouse
 
 ##### TPC-DS
 
 Test set:  
 S3  
-us-east-1  
-s3://bench-dataset/tpcds/sf1000
+endpoint: https://s3.us-east-1.amazonaws.com  
+region: us-east-1  
+bucket: bench-dataset  
+location: s3://bench-dataset/tpcds/sf1000
 
 OSS  
-oss-cn-beijing  
-s3://qa-build/performance/data/tpcds_sf1000
+endpoint: https://oss-cn-beijing.aliyuncs.com  
+region: oss-cn-beijing  
+bucket: bench-dataset  
+location: s3://bench-dataset/tpcds/sf1000
 
 Test SQL
 
@@ -155,12 +163,16 @@ Test SQL
 
 Test set:  
 S3  
-us-east-1  
-s3://bench-dataset/tpch/sf1000
+endpoint: https://s3.us-east-1.amazonaws.com  
+region: us-east-1  
+bucket: bench-dataset  
+location: s3://bench-dataset/tpch/sf1000
 
 OSS  
-oss-cn-beijing  
-s3://qa-build/performance/data/tpch_sf1000
+endpoint: https://oss-cn-beijing.aliyuncs.com  
+region: oss-cn-beijing  
+bucket: bench-dataset  
+location: s3://bench-dataset/tpch/sf1000
 
 Test SQL
 
@@ -175,12 +187,16 @@ Test SQL
 
 Test set:  
 S3  
-us-east-1  
-s3://bench-dataset/ssb/sf1000
+endpoint: https://s3.us-east-1.amazonaws.com  
+region: us-east-1  
+bucket: bench-dataset  
+location: s3://bench-dataset/ssb/sf1000
 
 OSS  
-oss-cn-beijing  
-s3://qa-build/performance/data/ssb_sf1000
+endpoint: https://oss-cn-beijing.aliyuncs.com  
+region: oss-cn-beijing  
+bucket: bench-dataset  
+location: s3://bench-dataset/ssb/sf1000
 
 Test SQL
 

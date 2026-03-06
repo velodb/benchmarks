@@ -16,6 +16,32 @@ TEST_ROOT=""
 ENGINE_TYPE=""
 RESULT_DIR=""
 TIMESTAMP=""
+TEMP_FILES=()
+LAST_TEMP_FILE=""
+
+# Track and clean temporary files created by this script.
+register_temp_file() {
+    TEMP_FILES+=("$1")
+}
+
+cleanup_temp_files() {
+    local tmp
+    for tmp in "${TEMP_FILES[@]:-}"; do
+        [ -n "$tmp" ] && rm -f -- "$tmp"
+    done
+}
+
+create_temp_sql_file() {
+    local prefix="$1"
+    local safe_prefix
+    local tmp_file
+    safe_prefix="${prefix//[^a-zA-Z0-9_.-]/_}"
+    tmp_file="$(mktemp "${TMPDIR:-/tmp}/bench_${safe_prefix}.XXXXXX.sql")" || die "Failed to create temporary file"
+    register_temp_file "$tmp_file"
+    LAST_TEMP_FILE="$tmp_file"
+}
+
+trap cleanup_temp_files EXIT
 
 # Load modular components
 source "$SCRIPT_DIR/lib/tools_utils.sh"
@@ -49,7 +75,7 @@ die() {
 # TODO(zgx): move this function to lib dir and install all dependencies
 check_dependencies() {
     echo "Checking dependencies..."
-    local cmds=("jq" "bc")
+    local cmds=("jq" "bc" "yq" "envsubst" "mktemp")
     local missing_deps=()
     for cmd in "${cmds[@]}"; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -186,6 +212,34 @@ load_config() {
     export RESULT_DIR
 }
 
+# Load storage configuration from benchmark.yaml
+# Each benchmark.yaml contains its own storage config (endpoint, region, bucket).
+# All fields support environment variable overrides via ${VAR:-default} syntax.
+load_storage_config() {
+    echo "Loading storage configuration..."
+
+    # 1. Check if storage config exists in benchmark.yaml
+    local has_storage
+    has_storage=$(yq eval '.storage // ""' "$CONFIG_FILE")
+    if [ -z "$has_storage" ] || [ "$has_storage" = "null" ]; then
+        echo "No storage configuration found in benchmark.yaml, skipping."
+        return 0
+    fi
+
+    # 2. Read each field from benchmark.yaml and expand env vars via eval echo
+    local raw_endpoint raw_region raw_bucket
+    raw_endpoint=$(yq eval '.storage.endpoint // ""' "$CONFIG_FILE")
+    raw_region=$(yq eval '.storage.region // ""' "$CONFIG_FILE")
+    raw_bucket=$(yq eval '.storage.bucket // ""' "$CONFIG_FILE")
+
+    # Expand environment variables (e.g., ${STORAGE_ENDPOINT:-https://...})
+    export STORAGE_ENDPOINT=$(eval echo "$raw_endpoint")
+    export STORAGE_REGION=$(eval echo "$raw_region")
+    export STORAGE_BUCKET=$(eval echo "$raw_bucket")
+
+    echo "Storage: endpoint=$STORAGE_ENDPOINT bucket=$STORAGE_BUCKET"
+}
+
 # Load database engine
 load_engine() {
     local engine_file_prefix="$ENGINE_TYPE"
@@ -240,9 +294,16 @@ run_ddl() {
     
     echo "Running DDL."
     
-    if ! engine_run_sql_file "$ddl_path"; then
+    # Keep DDL behavior consistent with load phase so ${STORAGE_*} works in DDL SQL.
+    local tmp_sql
+    create_temp_sql_file "ddl"
+    tmp_sql="$LAST_TEMP_FILE"
+    envsubst < "$ddl_path" > "$tmp_sql"
+    if ! engine_run_sql_file "$tmp_sql"; then
+        rm -f "$tmp_sql"
         die "DDL setup failed"
     fi
+    rm -f "$tmp_sql"
 }
 
 run_session() {
@@ -258,7 +319,8 @@ run_session() {
         return 0
     fi
     echo "Running set session."
-    local session_content=$(cat "$session_path")
+    local session_content
+    session_content=$(envsubst < "$session_path")
     if ! engine_run_sql "" "$session_content"; then
         die "Setup session failed"
     fi
@@ -306,9 +368,22 @@ run_load() {
             if ! bash "$load_file"; then
                 die "Failed to execute load script: $load_file"
             fi
-        elif ! engine_run_sql_file "$load_file"; then
-            # Execute SQL for loading
-            die "Failed to execute load SQL file: $load_file"
+        elif [[ "$load_file" == *.sql ]]; then
+            # Pre-process SQL using envsubst to inject STORAGE_* configs
+            local tmp_sql
+            create_temp_sql_file "load_${table_name}"
+            tmp_sql="$LAST_TEMP_FILE"
+            envsubst < "$load_file" > "$tmp_sql"
+            
+            if ! engine_run_sql_file "$tmp_sql"; then
+                rm -f "$tmp_sql"
+                die "Failed to execute load SQL file: $load_file"
+            fi
+            
+            # Clean up the temporary injected SQL file after execution
+            rm -f "$tmp_sql"
+        else
+            echo "Skipping unknown file type: $load_file"
         fi
         
         local end_time
@@ -383,7 +458,7 @@ run_query() {
                     local full_query_name="${prefix}q${query_counter}"
                     # Add to queries array: query_name and sql_content separately
                     all_query_names+=("$full_query_name")
-                    all_query_sqls+=("$line")
+                    all_query_sqls+=("$(printf '%s' "$line" | envsubst)")
                     
                     ((query_counter++))
                 done < "$query_file"
@@ -393,7 +468,7 @@ run_query() {
                 
                 # Read and escape SQL content
                 local sql_content
-                sql_content=$(cat "$query_file")
+                sql_content=$(envsubst < "$query_file")
                 
                 # Add to queries array: query_name and sql_content separately
                 all_query_names+=("$full_query_name")
@@ -520,8 +595,10 @@ run_query() {
 
 run_analyze() {
     echo "Running analysis..."
+    local raw_analyze_sql
+    raw_analyze_sql=$(yq eval '.paths.analyze // "analyze/analyze.sql"' "$CONFIG_FILE")
     local analyze_sql
-    analyze_sql=$(yq eval '.paths.analyze // "analyze/analyze.sql"' "$CONFIG_FILE")
+    analyze_sql="$(eval echo "$raw_analyze_sql")"
     
     if [[ "$analyze_sql" != /* ]]; then
         analyze_sql="$TEST_ROOT/$analyze_sql"
@@ -533,9 +610,16 @@ run_analyze() {
     fi
     
     
-    if engine_run_sql_file "$analyze_sql"; then
+    local tmp_sql
+    create_temp_sql_file "analyze"
+    tmp_sql="$LAST_TEMP_FILE"
+    envsubst < "$analyze_sql" > "$tmp_sql"
+
+    if engine_run_sql_file "$tmp_sql"; then
+        rm -f "$tmp_sql"
         echo "Analysis completed"
     else
+        rm -f "$tmp_sql"
         die "Analysis failed"
     fi
 }
@@ -598,6 +682,7 @@ main() {
     
     # Load configuration (to get jmeter flag early)
     load_config
+    load_storage_config
     jmeter="${jmeter:-false}"
     
     # Check framework dependencies (now that jmeter flag is known)

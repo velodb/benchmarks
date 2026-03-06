@@ -1,8 +1,8 @@
 INSERT INTO supplier (s_suppkey, s_name, s_address, s_nationkey, s_phone, s_acctbal, s_comment) SELECT c1, c2, c3, c4, c5, c6, c7 FROM S3(
-    "uri" = "s3://qa-build/performance/data/tpch_sf1000/supplier.tbl.gz",
+    "uri" = "s3://${STORAGE_BUCKET}/tpch/sf1000/supplier.tbl.gz",
     "format" = "csv",
-    "s3.endpoint" = "https://oss-cn-beijing-internal.aliyuncs.com",
-    "s3.region" = "oss-cn-beijing-internal",
+    "s3.endpoint" = "${STORAGE_ENDPOINT}",
+    "s3.region" = "${STORAGE_REGION}",
     "column_separator" = "|",
     "skip_lines" = "0"
 );

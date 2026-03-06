@@ -1,1 +1,1 @@
-COPY hits FROM 's3://bench-dataset/clickhouse/hits_compatible/hits.csv.gz' iam_role default GZIP FORMAT AS CSV  DELIMITER ',' QUOTE '"' REGION 'us-east-1';
+COPY hits FROM 's3://${STORAGE_BUCKET}/clickhouse/hits_compatible/hits.csv.gz' iam_role default GZIP FORMAT AS CSV  DELIMITER ',' QUOTE '"' REGION 'us-east-1';

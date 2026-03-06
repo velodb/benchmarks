@@ -1,3 +1,3 @@
 copy warehouse
 from
-    's3://bench-dataset/tpcds/sf1000/warehouse/' iam_role default GZIP DELIMITER '|' EMPTYASNULL REGION 'us-east-1';
+    's3://${STORAGE_BUCKET}/tpcds/sf1000/warehouse/' iam_role default GZIP DELIMITER '|' EMPTYASNULL REGION 'us-east-1';
