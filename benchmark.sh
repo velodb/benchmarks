@@ -222,30 +222,25 @@ initialize_test() {
 # Load and validate YAML configuration
 load_config() {
     echo "Loading configuration..."
-    
+
     # Validate YAML syntax
     if ! yq eval '.' "$CONFIG_FILE" >/dev/null 2>&1; then
         die "Invalid YAML syntax in configuration file: $CONFIG_FILE"
     fi
-    
-    # Export connection parameters as environment variables
-    while IFS='=' read -r key value; do
-        if [ -n "$key" ] && [ -n "$value" ]; then
-            # Expand placeholders without using eval.
-            expanded_value=$(expand_template_value "$value")
-            export "$key=$expanded_value"
-        fi
-    done < <(yq eval '.engine.connection // {} | to_entries | .[] | .key + "=" + .value' "$CONFIG_FILE")
-    
-    # Export test parameters as environment variables
-    while IFS='=' read -r key value; do
-        if [ -n "$key" ] && [ -n "$value" ]; then
-            # Expand placeholders without using eval.
-            expanded_value=$(expand_template_value "$value")
-            export "$key=$expanded_value"
-        fi
-    done < <(yq eval '.parameters // {} | to_entries | .[] | .key + "=" + .value' "$CONFIG_FILE")
-    
+
+    # Export connection and parameters
+    for section in "engine.connection" "parameters"; do
+        while IFS='=' read -r key value; do
+            [ -n "$key" ] && [ -n "$value" ] && export "$key=$(expand_template_value "$value")"
+        done < <(yq eval ".$section // {} | to_entries | .[] | .key + \"=\" + .value" "$CONFIG_FILE")
+    done
+
+    # Export paths (scalar values only)
+    for key in ddl session load_dir analyze query_mode; do
+        value=$(yq eval ".paths.$key // \"\"" "$CONFIG_FILE")
+        [ -n "$value" ] && [ "$value" != "null" ] && export "$key=$(expand_template_value "$value")"
+    done
+
     # Set TEST_ROOT for engine access
     export TEST_ROOT
     export RESULT_DIR
@@ -317,27 +312,26 @@ run_ddl() {
     if ! engine_create_database; then
         die "Database creation failed"
     fi
-    
-    local ddl_path
-    ddl_path=$(yq eval '.paths.ddl // "ddl.sql"' "$CONFIG_FILE")
-    
+
+    local ddl_file="${ddl:-ddl.sql}"
+
     # Convert relative path to absolute
-    if [[ "$ddl_path" != /* ]]; then
-        ddl_path="$TEST_ROOT/$ddl_path"
+    if [[ "$ddl_file" != /* ]]; then
+        ddl_file="$TEST_ROOT/$ddl_file"
     fi
-    
-    if [ ! -f "$ddl_path" ]; then
+
+    if [ ! -f "$ddl_file" ]; then
         echo "DDL file not found, skipping setup"
         return 0
     fi
-    
+
     echo "Running DDL."
-    
+
     # Keep DDL behavior consistent with load phase so ${STORAGE_*} works in DDL SQL.
     local tmp_sql
     create_temp_sql_file "ddl"
     tmp_sql="$LAST_TEMP_FILE"
-    envsubst < "$ddl_path" > "$tmp_sql"
+    envsubst < "$ddl_file" > "$tmp_sql"
     if ! engine_run_sql_file "$tmp_sql"; then
         rm -f "$tmp_sql"
         die "DDL setup failed"
@@ -346,20 +340,20 @@ run_ddl() {
 }
 
 run_session() {
-    local session_path
-    session_path=$(yq eval '.paths.session // "session/session.sql"' "$CONFIG_FILE")
+    local session_file="${session:-session/session.sql}"
+
     # Convert relative path to absolute
-    if [[ "$session_path" != /* ]]; then
-        session_path="$TEST_ROOT/$session_path"
+    if [[ "$session_file" != /* ]]; then
+        session_file="$TEST_ROOT/$session_file"
     fi
-    
-    if [ ! -f "$session_path" ]; then
+
+    if [ ! -f "$session_file" ]; then
         echo "Session file not found, skipping session setup"
         return 0
     fi
     echo "Running set session."
     local session_content
-    session_content=$(envsubst < "$session_path")
+    session_content=$(envsubst < "$session_file")
     if ! engine_run_sql "" "$session_content"; then
         die "Setup session failed"
     fi
@@ -367,41 +361,40 @@ run_session() {
 
 # Load data
 run_load() {
-    local load_dir
-    load_dir=$(yq eval '.paths.load_dir // "load/"' "$CONFIG_FILE")
-    
+    local load="$load_dir"
+
     # Convert relative path to absolute
-    if [[ "$load_dir" != /* ]]; then
-        load_dir="$TEST_ROOT/$load_dir"
+    if [[ "$load" != /* ]]; then
+        load="$TEST_ROOT/$load"
     fi
-    
-    if [ ! -d "$load_dir" ]; then
+
+    if [ ! -d "$load" ]; then
         echo "Load directory not found, skipping data loading"
         return 0
     fi
-    
+
     echo "Loading data..."
-    
+
     # Initialize load results CSV
     local load_csv="$RESULT_DIR/load.csv"
     echo "table_name,load_time_seconds" > "$load_csv"
-    
+
     # Process all SQL and shell script files in load directory
     local loaded_count=0
-    for load_file in "$load_dir"/*.sql "$load_dir"/*.sh; do
+    for load_file in "$load"/*.sql "$load"/*.sh; do
         if [ ! -f "$load_file" ]; then
             continue
         fi
-        
+
         local table_name
         table_name=$(basename "$load_file" .sql)
         table_name=$(basename "$table_name" .sh)
-        
+
         echo "Loading $table_name..."
-        
+
         local start_time
         start_time=$(date +%s%3N)
-        
+
         if [[ "$load_file" == *.sh ]]; then
             # Execute shell script for loading
             if ! bash "$load_file"; then
@@ -424,18 +417,18 @@ run_load() {
         else
             echo "Skipping unknown file type: $load_file"
         fi
-        
+
         local end_time
         end_time=$(date +%s%3N)
-        
+
         local duration
         duration=$(echo "scale=3; ($end_time - $start_time) / 1000" | bc)
-        
+
         echo "$table_name,$duration" >> "$load_csv"
         echo "    ${duration}s"
         loaded_count=$((loaded_count + 1))
     done
-    
+
     echo "Data loading completed: $loaded_count tables"
 }
 
@@ -445,13 +438,12 @@ run_query() {
     while IFS= read -r line; do
         query_dirs+=("$line")
     done < <(yq eval '.paths.query_dirs[]?' "$CONFIG_FILE")
-    query_mode=$(yq eval '.paths.query_mode // "file"' "$CONFIG_FILE")
-    
+
     if [ ${#query_dirs[@]} -eq 0 ]; then
         echo "No query directories specified, skipping query execution"
         return 0
     fi
-    
+
     # Collect all queries first
     local -a all_query_names=()
     local -a all_query_sqls=()
@@ -460,22 +452,22 @@ run_query() {
         if [[ "$query_dir" != /* ]]; then
             query_dir="$TEST_ROOT/$query_dir"
         fi
-        
+
         if [ ! -d "$query_dir" ]; then
             echo "Query directory not found: $query_dir, skipping"
             continue
         fi
-        
+
         echo "Processing queries from $(basename "$query_dir")..."
         # Process all SQL files in directory (sorted numerically)
         while IFS= read -r -d '' query_file; do
             if [ ! -f "$query_file" ]; then
                 continue
             fi
-            
+
             local query_name prefix
             query_name=$(basename "$query_file" .sql)
-            
+
             # Add prefix based on directory name for organization
             local dir_name
             dir_name=$(basename "$query_dir")
@@ -484,7 +476,7 @@ run_query() {
             else
                 prefix=""
             fi
-            
+
             if [ "$query_mode" = "line" ]; then
                 # Line-based mode: each line is a separate query
                 local query_counter=1
@@ -635,18 +627,15 @@ run_query() {
 
 run_analyze() {
     echo "Running analysis..."
-    local raw_analyze_sql
-    raw_analyze_sql=$(yq eval -r '.paths.analyze // "analyze/analyze.sql"' "$CONFIG_FILE")
-    local analyze_sql
-    analyze_sql="$(expand_template_value "$raw_analyze_sql")"
-    
+    local analyze_sql="${analyze:-analyze/analyze.sql}"
+
     if [ -z "$analyze_sql" ] || [ "$analyze_sql" = "null" ]; then
         echo "No analysis SQL provided, skipping"
         return 0
     fi
 
     if [[ "$analyze_sql" == *'${'* ]]; then
-        die "Unresolved variable in analyze path: $raw_analyze_sql"
+        die "Unresolved variable in analyze path: $analyze_sql"
     fi
 
     if [[ "$analyze_sql" != /* ]]; then
@@ -656,8 +645,7 @@ run_analyze() {
     if [ ! -f "$analyze_sql" ]; then
         die "Analysis SQL file not found: $analyze_sql"
     fi
-    
-    
+
     local tmp_sql
     create_temp_sql_file "analyze"
     tmp_sql="$LAST_TEMP_FILE"
