@@ -1,4 +1,5 @@
-SELECT sleep(60);
+-- Avoid sleep() which can fail due to fragment RPC timeouts under load.
+set query_timeout=86400;
 DROP STATS call_center;
 DROP STATS catalog_page;
 DROP STATS catalog_returns;
