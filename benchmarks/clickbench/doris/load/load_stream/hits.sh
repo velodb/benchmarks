@@ -17,7 +17,7 @@ max_filter_ratio="${DORIS_MAX_FILTER_RATIO:-0.1}"
 url="http://${host}:${http_port}/api/${db}/${table}/_stream_load"
 label="bench_${db}_${table}_${RANDOM}_$$"
 
-echo "[INFO] Stream load ${db}.${table} from: /root/benchmarks/benchmarks/clickbench/postgresql/load/hits.tsv"
+echo "[INFO] Stream load ${db}.${table} from: ${BENCH_DATA_DIR:-/mnt/disk1/wangchengfeng/benchmarks_velodb/benchmarks/clickbench/postgresql/load/hits.tsv}"
 
 sep_value=$'\t'
 
@@ -31,8 +31,10 @@ headers=(
   -H "max_filter_ratio:${max_filter_ratio}"
 )
 
-if [[ ! -f '/root/benchmarks/benchmarks/clickbench/postgresql/load/hits.tsv' ]]; then
-  echo "[ERROR] Source file not found: /root/benchmarks/benchmarks/clickbench/postgresql/load/hits.tsv" >&2
+DATA_FILE="${BENCH_DATA_DIR:-/mnt/disk1/wangchengfeng/benchmarks_velodb/benchmarks/clickbench/postgresql/load/hits.tsv}"
+
+if [[ ! -f "$DATA_FILE" ]]; then
+  echo "[ERROR] Source file not found: $DATA_FILE" >&2
   exit 1
 fi
 
@@ -40,11 +42,11 @@ fi
 max_body_mb="${DORIS_STREAM_LOAD_BODY_MAX_MB:-10240}"
 chunk_mb="${DORIS_STREAM_LOAD_CHUNK_MB:-8192}"
 
-file_size_bytes="$(stat -c%s '/root/benchmarks/benchmarks/clickbench/postgresql/load/hits.tsv')"
+file_size_bytes="$(stat -c%s "$DATA_FILE")"
 max_body_bytes="$((max_body_mb * 1024 * 1024))"
 
 if (( file_size_bytes == 0 )); then
-  echo "[ERROR] Source file is empty: /root/benchmarks/benchmarks/clickbench/postgresql/load/hits.tsv" >&2
+  echo "[ERROR] Source file is empty: $DATA_FILE" >&2
   exit 1
 fi
 
@@ -66,7 +68,7 @@ if (( file_size_bytes > max_body_bytes )); then
   cleanup() { rm -rf "$chunk_dir"; }
   trap cleanup EXIT
   # Split by line boundaries to avoid corrupting records.
-  split -C "${chunk_mb}m" -d -a 4 '/root/benchmarks/benchmarks/clickbench/postgresql/load/hits.tsv' "$chunk_dir/part_"
+  split -C "${chunk_mb}m" -d -a 4 "$DATA_FILE" "$chunk_dir/part_"
 
   # Load each chunk.
   for part in "$chunk_dir"/part_*; do
@@ -82,7 +84,7 @@ if (( file_size_bytes > max_body_bytes )); then
   exit 0
 fi
 
-resp="$(do_curl "$label" '/root/benchmarks/benchmarks/clickbench/postgresql/load/hits.tsv')"
+resp="$(do_curl "$label" "$DATA_FILE")"
 
 echo "$resp"
 echo "$resp" | grep -Eqi '"status"[[:space:]]*:[[:space:]]*"success"' || {

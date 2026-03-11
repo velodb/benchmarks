@@ -171,6 +171,7 @@ initialize_test() {
     
     # Create timestamped results directory
     TIMESTAMP="$(date '+%Y%m%d_%H%M%S')"
+    export TIMESTAMP
     RESULT_DIR="$SCRIPT_DIR/results/${benchmark_name}_${scale_factor}_${ENGINE_TYPE}_${TIMESTAMP}"
     mkdir -p "$RESULT_DIR"
     
@@ -278,7 +279,7 @@ run_ddl() {
         die "Database creation failed"
     fi
 
-    local ddl_file="${DDL:-ddl.sql}"
+    local ddl_file="${DDL:-ddl/ddl.sql}"
 
     # Convert relative path to absolute
     if [[ "$ddl_file" != /* ]]; then
@@ -326,70 +327,86 @@ run_session() {
 
 # Load data
 run_load() {
-    local load="$LOAD_DIR"
+    local load_dir="$LOAD_DIR"
 
-    # Convert relative path to absolute
-    if [[ "$load" != /* ]]; then
-        load="$TEST_ROOT/$load"
+    if [ -z "$load_dir" ]; then
+        echo "No load directory configured, skipping data loading"
+        return 0
     fi
 
-    if [ ! -d "$load" ]; then
+    # Convert relative path to absolute
+    if [[ "$load_dir" != /* ]]; then
+        load_dir="$TEST_ROOT/$load_dir"
+    fi
+
+    if [ ! -d "$load_dir" ]; then
         echo "Load directory not found, skipping data loading"
         return 0
     fi
 
-    echo "Loading data..."
+    # Detect method from directory name
+    local dirname=$(basename "$load_dir")
+    local detected_method="insert_into"  # default
+
+    if [[ "$dirname" == *stream* ]]; then
+        detected_method="stream_load"
+    elif [[ "$dirname" == *s3* ]]; then
+        detected_method="s3_load"
+    elif [[ "$dirname" == *insert* ]]; then
+        detected_method="insert_into"
+    fi
+
+    echo "Loading data from $dirname (method: $detected_method)..."
 
     # Initialize load results CSV
     local load_csv="$RESULT_DIR/load.csv"
-    echo "table_name,load_time_seconds" > "$load_csv"
+    echo "table_name,method,load_time_seconds" > "$load_csv"
 
-    # Process all SQL and shell script files in load directory
     local loaded_count=0
-    for load_file in "$load"/*.sql "$load"/*.sh; do
+    for load_file in "$load_dir"/*.sql "$load_dir"/*.sh; do
         if [ ! -f "$load_file" ]; then
             continue
         fi
 
-        local table_name
-        table_name=$(basename "$load_file" .sql)
-        table_name=$(basename "$table_name" .sh)
+        local filename=$(basename "$load_file")
+        local table_name="${filename%.*}"
 
-        echo "Loading $table_name..."
+        echo "  Loading $table_name..."
 
-        local start_time
-        start_time=$(date +%s%3N)
+        local start_time=$(date +%s%3N)
+        local load_output=""
 
-        if [[ "$load_file" == *.sh ]]; then
-            # Execute shell script for loading
-            if ! bash "$load_file"; then
-                die "Failed to execute load script: $load_file"
+        if type -t engine_load_data > /dev/null; then
+            if ! engine_load_data "$detected_method" "$load_file" "$table_name"; then
+                die "Engine failed to load data for $table_name using $detected_method"
             fi
-        elif [[ "$load_file" == *.sql ]]; then
-            # Pre-process SQL using envsubst to inject STORAGE_* configs
-            local tmp_sql
-            create_temp_sql_file "load_${table_name}"
-            tmp_sql="$LAST_TEMP_FILE"
-            envsubst < "$load_file" > "$tmp_sql"
-            
-            if ! engine_run_sql_file "$tmp_sql"; then
-                rm -f "$tmp_sql"
-                die "Failed to execute load SQL file: $load_file"
-            fi
-            
-            # Clean up the temporary injected SQL file after execution
-            rm -f "$tmp_sql"
         else
-            echo "Skipping unknown file type: $load_file"
+            # Default fallback for engines that don't implement engine_load_data
+            if [[ "$detected_method" == "stream_load" ]]; then
+                if load_output=$(bash "$load_file" 2>&1); then
+                    echo "$load_output"
+                else
+                    echo "$load_output" >&2
+                    die "Failed to execute load script: $load_file"
+                fi
+            else
+                local tmp_sql
+                create_temp_sql_file "load_${table_name}"
+                tmp_sql="$LAST_TEMP_FILE"
+                envsubst < "$load_file" > "$tmp_sql"
+
+                if ! engine_run_sql_file "$tmp_sql"; then
+                    rm -f "$tmp_sql"
+                    die "Failed to execute load SQL file: $load_file"
+                fi
+                rm -f "$tmp_sql"
+            fi
         fi
 
-        local end_time
-        end_time=$(date +%s%3N)
+        local end_time=$(date +%s%3N)
+        local duration=$(echo "scale=3; ($end_time - $start_time) / 1000" | bc)
 
-        local duration
-        duration=$(echo "scale=3; ($end_time - $start_time) / 1000" | bc)
-
-        echo "$table_name,$duration" >> "$load_csv"
+        echo "$table_name,$detected_method,$duration" >> "$load_csv"
         echo "    ${duration}s"
         loaded_count=$((loaded_count + 1))
     done
@@ -397,6 +414,47 @@ run_load() {
     echo "Data loading completed: $loaded_count tables"
 }
 
+run_check_rows() {
+    echo "Checking loaded rows..."
+    local check_start
+    check_start=$(date +%s%3N)
+
+    # Read expected row counts from tables config in benchmark.yaml
+    local has_tables
+    has_tables=$(yq eval '.tables // ""' "$CONFIG_FILE")
+    if [ -z "$has_tables" ] || [ "$has_tables" = "null" ]; then
+        echo "No tables config found in benchmark.yaml, skipping check rows"
+        return 0
+    fi
+
+    local rows_csv="$RESULT_DIR/check_rows.csv"
+    echo "table_name,rows" > "$rows_csv"
+
+    # Validate actual row counts against expected values from config
+    local has_mismatch=false
+    local mismatch_details=""
+    while IFS='=' read -r table_name expected_rows; do
+        [ -z "$table_name" ] && continue
+        local actual_rows
+        actual_rows=$(engine_get_table_rows "$table_name")
+        echo "$table_name,$actual_rows" >> "$rows_csv"
+        if [ "$actual_rows" -ne "$expected_rows" ]; then
+            echo "    MISMATCH $table_name: expected=$expected_rows actual=$actual_rows"
+            has_mismatch=true
+            mismatch_details+="  $table_name: expected=$expected_rows actual=$actual_rows\n"
+        else
+            echo "    OK $table_name: $actual_rows rows"
+        fi
+    done < <(yq eval '.tables | to_entries | .[] | .key + "=" + (.value | tostring)' "$CONFIG_FILE")
+
+    if [ "$has_mismatch" = true ]; then
+        die "Row count validation failed:\n$mismatch_details"
+    fi
+
+    local check_end
+    check_end=$(date +%s%3N)
+    echo "scale=3; ($check_end - $check_start) / 1000" | bc > "$RESULT_DIR/check_rows_time.txt"
+}
 # Run benchmark queries
 run_query() {
     local query_dir="${QUERY_DIR:-query/}"
@@ -711,17 +769,22 @@ main() {
     
     # Run benchmark workflow
     echo "Starting benchmark: $ENGINE_TYPE"
-    # TODO(zgx): add prepare set session ..
+    # 1. Run DDL first so the database and tables exist
+    if [[ "$load" == "true" ]]; then
+        run_ddl
+    fi
+
+    # 2. Run Session setup next so variables are set for Load and Query phases
     if [[ "$session" != "true" ]]; then
         echo "Session setup disabled, skipping"
     else
         run_session
     fi
-    if [[ "$load" != "true" ]]; then
-        echo "Data loading disabled, skipping"
-    else
-        run_ddl
+
+    # 3. Finally run Load and other phases
+    if [[ "$load" == "true" ]]; then
         run_load
+        run_check_rows
     fi
     
     if [[ "$analyze" != "true" ]]; then

@@ -54,6 +54,18 @@ engine_run_sql() {
     return 1
 }
 
+# 2.2. Get row count of a loaded table
+#    This function queries the engine to verify the actual number of rows
+#    loaded into the specified table. Used for benchmark load validation.
+#
+#    @param $1: Table name to check
+#    @return: 0 on success (prints row count to stdout), non-zero on failure
+engine_get_table_rows() {
+    local table="$1"
+    echo "0"
+    return 0
+}
+
 # 3. Generate JDBC DataSource XML configuration
 #    This function returns a complete <JDBCDataSource> XML configuration block
 #    that will be embedded in the JMeter JMX file. The configuration should include

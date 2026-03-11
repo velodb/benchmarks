@@ -29,7 +29,7 @@ paths:
   ddl: "ddl/ddl.sql" # DDL setup file
   session_file: "${SESSION_FILE:-session/session.sql}" # Session setup file
   analyze_file: "${ANALYZE_FILE:-analyze/analyze.sql}" # Analyze statistics file
-  load_dir: "load/" # Directory containing data loading SQL files
+  load_dir: "load/load_s3/" # Directory containing data loading SQL files
   query_dir: "${QUERY_DIR:-query/}" # Directory containing query SQL files
   query_mode: "file" # Query file format: "line" (each line is a query) or "file" (entire file is one query)
 storage:

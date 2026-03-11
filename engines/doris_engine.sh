@@ -137,6 +137,30 @@ engine_run_sql() {
     fi
 }
 
+engine_get_table_rows() {
+    local table="$1"
+    local host="${fe_host:-127.0.0.1}"
+    local port="${fe_query_port:-9030}"
+    local sys_user="${user:-root}"
+
+    # Do not use `export MYSQL_PWD` to avoid environment pollution
+    MYSQL_PWD="${password:-}" mysql -h"${host}" -P"${port}" -u"${sys_user}" "${db}" \
+        -N -s -e "SELECT COUNT(*) FROM ${table};" 2>/dev/null || echo "0"
+
+    return 0
+}
+
+# Check S3 load status
+engine_check_load_status() {
+    local label="$1"
+    local host="${fe_host:-127.0.0.1}"
+    local port="${fe_query_port:-9030}"
+    local sys_user="${user:-root}"
+
+    MYSQL_PWD="${password:-}" mysql -h"${host}" -P"${port}" -u"${sys_user}" "${db}" \
+        -e "SHOW LOAD WHERE Label = '${label}'\\G" 2>/dev/null
+}
+
 # 3. Generate JDBC DataSource XML configuration for Doris
 engine_get_jdbc_datasource() {
     # Escape any special characters in the password
@@ -291,4 +315,92 @@ engine_clean_trash() {
         echo "ERROR: Failed to clean trash" >&2
         return 1
     fi
+}
+
+# Optional: Custom generic load implementation for Doris
+engine_load_data() {
+    local detected_method="$1"
+    local load_file="$2"
+    local table_name="$3"
+    local load_output=""
+
+    if [[ "$detected_method" == "stream_load" ]]; then
+        if load_output=$(bash "$load_file" 2>&1); then
+            echo "$load_output"
+        else
+            echo "$load_output" >&2
+            echo "ERROR: Failed to execute load script: $load_file" >&2
+            return 1
+        fi
+    elif [[ "$detected_method" == "s3_load" ]]; then
+        # S3 Broker Load is async — submit then poll SHOW LOAD
+        local tmp_sql
+        create_temp_sql_file "load_${table_name}"
+        tmp_sql="$LAST_TEMP_FILE"
+        envsubst < "$load_file" > "$tmp_sql"
+
+        if ! engine_run_sql_file "$tmp_sql"; then
+            rm -f "$tmp_sql"
+            echo "ERROR: Failed to submit S3 load: $load_file" >&2
+            return 1
+        fi
+        rm -f "$tmp_sql"
+
+        local load_label="${table_name}_${TIMESTAMP}"
+        echo "    Waiting for S3 load to complete (label: $load_label)..."
+        # Poll load status every 10 seconds
+        local max_wait=36000
+        local waited=0
+        while [ $waited -lt $max_wait ]; do
+            sleep 10
+            waited=$((waited + 10))
+
+            local status_output
+            status_output=$(engine_check_load_status "$load_label")
+
+            if echo "$status_output" | grep -q "FINISHED"; then
+                echo "    S3 load completed successfully"
+                break
+            elif echo "$status_output" | grep -q "CANCELLED"; then
+                echo "$status_output"
+                echo "ERROR: S3 load cancelled" >&2
+                return 1
+            fi
+
+            # Print progress every minute
+            if [ $((waited % 60)) -eq 0 ]; then
+                local progress
+                progress=$(echo "$status_output" | grep -oP 'Progress: \K[^|]+' || echo "unknown")
+                echo "    [$waited s] Progress: $progress"
+            fi
+        done
+
+        if [ $waited -ge $max_wait ]; then
+            echo "ERROR: S3 load timeout after ${max_wait}s" >&2
+            return 1
+        fi
+    elif [[ "$detected_method" == "insert_into" ]]; then
+        local tmp_sql
+        create_temp_sql_file "load_${table_name}"
+        tmp_sql="$LAST_TEMP_FILE"
+        envsubst < "$load_file" > "$tmp_sql"
+
+        if ! engine_run_sql_file "$tmp_sql"; then
+            rm -f "$tmp_sql"
+            echo "ERROR: Failed to execute load SQL file: $load_file" >&2
+            return 1
+        fi
+        rm -f "$tmp_sql"
+    else
+        echo "ERROR: Unknown load method: $detected_method" >&2
+        return 1
+    fi
+}
+
+engine_check_load_status() {
+    local label="$1"
+    export MYSQL_PWD="${password:-}"
+    local args=(-h"$fe_host" -P"$fe_query_port" -u"$user")
+    [ -n "${db:-}" ] && args+=(-D"$db")
+    mysql "${args[@]}" -e "SHOW LOAD WHERE Label = '$label' \G" 2>/dev/null || true
 }
