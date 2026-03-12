@@ -11,6 +11,7 @@ set -euo pipefail
 
 # Global variables
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="$SCRIPT_DIR/lib"
 CONFIG_FILE=""
 TEST_ROOT=""
 ENGINE_TYPE=""
@@ -660,6 +661,18 @@ run_jmeter() {
     fi
 }
 
+run_vectordbbench() {
+    local runner_file="$LIB_DIR/vectordb_runner.sh"
+    if [ ! -f "$runner_file" ]; then
+        die "VectorDBBench runner not found: $runner_file"
+    fi
+
+    # Source the runner and execute
+    # shellcheck source=lib/vectordb_runner.sh
+    source "$runner_file"
+    execute_vectordbbench_task
+}
+
 # Main execution function
 main() {
     # Initialize tools early (especially yq which is needed for config parsing)
@@ -739,6 +752,10 @@ main() {
     else
         generate_jmx
         run_jmeter
+    fi
+
+    if [[ "$vectordbbench" == "true" ]]; then
+        run_vectordbbench
     fi
     
     # Generation Result

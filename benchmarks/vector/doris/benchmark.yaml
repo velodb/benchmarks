@@ -1,0 +1,46 @@
+# Doris VectorDBBench Configuration
+
+engine:
+  type: "doris"
+  connection:
+    fe_host: "${FE_HOST:-127.0.0.1}"
+    fe_http_port: "${FE_HTTP_PORT:-8030}"
+    fe_query_port: "${FE_QUERY_PORT:-9030}"
+    user: "${USER:-root}"
+    password: "${PASSWORD:-}"
+    db: "${DB:-vector_bench}"
+
+parameters:
+  # Framework switches
+  load: "false"
+  query: "false"
+  session: "false"
+  analyze: "false"
+  
+  # VectorDBBench switch
+  vectordbbench: "${VECTORDBBENCH:-true}"
+
+# VectorDBBench Specific Configuration
+vectordbbench:
+  case:
+    type: "${CASE_TYPE:-Performance768D1M}" # Case type from VectorDBBench
+    task_label: "${TASK_LABEL:-doris-vector-test}"
+    db_label: "${DB_LABEL:-standard}"
+  
+  test:
+    concurrency: "${CONCURRENCY:-1,10,20}" # Gradient concurrency
+    num_per_batch: 100000
+    stream_load_rows_per_batch: 100000
+  
+  index:
+    properties: "max_degree=128,ef_construction=256"
+    session_vars: "hnsw_ef_search=100"
+
+  storage:
+    dataset_source: "AliyunOSS" # Use AliyunOSS for faster download in CN
+    dataset_local_dir: "${DATASET_LOCAL_DIR:-/tmp/vectordbbench_data}"
+    results_local_dir: "${RESULTS_LOCAL_DIR:-results/vector}"
+
+# Paths for framework compatibility (if needed)
+paths:
+  ddl: "ddl/ddl.sql"
