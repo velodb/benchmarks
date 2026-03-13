@@ -1,0 +1,38 @@
+# Velodb TPC-DS SF1000 Benchmark Configuration
+
+# Engine connection information
+engine:
+  type: "velodb" # Engine type
+  connection:
+    fe_host: "${FE_HOST:-127.0.0.1}" # Velodb Frontend host
+    fe_http_port: "${FE_HTTP_PORT:-8030}" # HTTP port for Velodb Frontend
+    fe_query_port: "${FE_QUERY_PORT:-9030}" # Query port for Velodb Frontend
+    user: "${USER:-root}" # Velodb username
+    password: "${PASSWORD:-}" # Velodb password
+    db: "${DB:-tpcds}" # Velodb database name
+
+# test execution parameters
+parameters:
+  load: "${LOAD:-false}" # Whether to run data loading phase
+  query: "${QUERY:-false}" # Whether to run benchmark query
+  session: "${SESSION:-false}" # Whether to run session setup phase
+  analyze: "${ANALYZE:-false}" # Whether to run analyze phase
+  query_times: "${QUERY_TIMES:-3}" # Number of times to run each query
+  jmeter: "${JMETER:-false}" # Whether to run jmeter phase
+  threads: "${JMETER_THREADS:-50}" # Number of JMeter threads
+  loops: "${JMETER_LOOPS:-1}" # Number of loops per thread
+  duration: "${JMETER_DURATION:-180}" # Test duration in seconds (0 = use loops)
+  query_by_query: "${QUERY_BY_QUERY:-true}" # Run queries one by one (true) or concurrently with random selection (false)
+
+# Test resource paths (relative to this YAML file)
+paths:
+  ddl: "ddl/ddl.sql" # DDL setup file
+  session_file: "${SESSION_FILE:-session/session.sql}" # Session setup file
+  analyze_file: "${ANALYZE_FILE:-analyze/analyze.sql}" # Analyze statistics file
+  load_dir: "load/" # Directory containing data loading SQL files
+  query_dir: "${QUERY_DIR:-query/}" # Directory containing query SQL files
+  query_mode: "file" # Query file format: "line" (each line is a query) or "file" (entire file is one query)
+storage:
+  endpoint: "${STORAGE_ENDPOINT:-https://s3.us-east-1.amazonaws.com}"
+  region: "${STORAGE_REGION:-us-east-1}"
+  bucket: "${STORAGE_BUCKET:-bench-dataset}"

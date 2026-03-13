@@ -1,0 +1,1 @@
+INSERT INTO inventory (inv_date_sk, inv_item_sk, inv_warehouse_sk, inv_quantity_on_hand) SELECT inv_date_sk, inv_item_sk, inv_warehouse_sk, inv_quantity_on_hand FROM tpcds.sf1000.inventory;
