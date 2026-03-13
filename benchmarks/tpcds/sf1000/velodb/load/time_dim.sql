@@ -1,0 +1,1 @@
+INSERT INTO time_dim (t_time_sk, t_time_id, t_time, t_hour, t_minute, t_second, t_am_pm, t_shift, t_sub_shift, t_meal_time) SELECT t_time_sk, t_time_id, t_time, t_hour, t_minute, t_second, t_am_pm, t_shift, t_sub_shift, t_meal_time FROM tpcds.sf1000.time_dim;
