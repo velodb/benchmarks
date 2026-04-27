@@ -208,7 +208,7 @@ echo "Generating standalone HTML benchmark report..."
 # Generate the HTML file
 cat > "$OUTPUT_FILE" << 'HTMLHEAD'
 <!DOCTYPE html>
-<html>
+<html data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <title>VeloDB Benchmarks - Database Performance Comparison</title>
@@ -496,23 +496,6 @@ cat > "$OUTPUT_FILE" << 'HTMLHEAD'
             text-wrap: none;
         }
 
-        .themes {
-            float: right;
-            font-size: 200%;
-            cursor: pointer;
-        }
-
-        #toggle-dark, #toggle-light {
-            padding-right: 0.5rem;
-            cursor: pointer;
-        }
-
-        #toggle-dark:hover, #toggle-light:hover {
-            display: inline-block;
-            transform: translate(1px, 1px);
-            filter: brightness(125%);
-        }
-
         #scale_hint {
             font-weight: normal;
             font-size: 80%;
@@ -548,7 +531,6 @@ cat > "$OUTPUT_FILE" << 'HTMLHEAD'
 <div id="copy-notification" class="copy-notification">Link copied to clipboard!</div>
 
 <div class="header stick-left">
-    <span class="nowrap themes"><span id="toggle-dark">🌚</span><span id="toggle-light">🌞</span></span>
     <h1 id="page-title">VeloDB Benchmarks - Database Performance Comparison</h1>
     <a href="https://github.com/velodb/benchmarks">GitHub Repository</a> | 
     <a href="https://github.com/velodb/benchmarks#readme">Methodology</a> |
@@ -687,7 +669,7 @@ let selectors = {
 // Available thread counts (extracted from JMeter data)
 let availableThreads = [1];
 
-let theme = 'light';
+const theme = 'dark';
 
 function detectPageMode(pathname, search) {
     const params = new URLSearchParams(search);
@@ -712,7 +694,6 @@ function getUrlParams() {
         cluster: params.get('cluster'),
         thread: params.get('thread'),
         metric: params.get('metric'),
-        theme: params.get('theme'),
     };
 }
 
@@ -766,10 +747,6 @@ function updateUrlParams() {
     
     if (selectors.metric !== 'hot') {
         params.set('metric', selectors.metric);
-    }
-    
-    if (theme !== 'light') {
-        params.set('theme', theme);
     }
     
     const newUrl = params.toString() 
@@ -827,22 +804,7 @@ function applyUrlParams(urlParams) {
         selectors.metric = urlParams.metric;
     }
     
-    if (urlParams.theme) {
-        theme = urlParams.theme;
-    }
 }
-
-// Theme management
-function setTheme(new_theme) {
-    theme = new_theme;
-    document.documentElement.setAttribute('data-theme', theme);
-    window.localStorage.setItem('theme', theme);
-    updateUrlParams();
-    render();
-}
-
-document.getElementById('toggle-light').addEventListener('click', e => setTheme('light'));
-document.getElementById('toggle-dark').addEventListener('click', e => setTheme('dark'));
 
 // Helper functions
 function clearElement(elem) {
@@ -1244,14 +1206,6 @@ function initSelectors() {
 
     if (getSelectedValues(selectors.scale).length === 0) {
         setSelectionFromList(selectors.scale, getDefaultSelectedScales(scales));
-    }
-    
-    // Apply theme from URL or localStorage (URL takes priority)
-    const saved_theme = urlParams.theme || window.localStorage.getItem('theme');
-    if (saved_theme) {
-        theme = saved_theme;
-        document.documentElement.setAttribute('data-theme', theme);
-        window.localStorage.setItem('theme', theme);
     }
     
     // Update UI to reflect applied parameters
