@@ -61,6 +61,24 @@ Our goal is to build `velodb.github.io/benchmarks` into the industry's most trus
     ```bash
     LOAD=false JMETER_THREADS=100 bash benchmark.sh --config ...
     ```
+   For cloud cold-run scenarios on VeloDB / Doris, enable BE-side cache clearing.
+   `BE_HOSTS` is required; each flag is independent and can be combined:
+   ```bash
+   BE_HOSTS=10.0.0.11,10.0.0.12 \
+   CLEAR_FILE_CACHE=true \
+   CLEAR_PAGE_CACHE=true \
+   CLEAR_SYS_PAGE_CACHE=true \
+   CLEAR_CACHE_SCOPE=cold \
+   bash benchmark.sh --config benchmarks/clickbench_update/percent_100/velodb-cloud/benchmark.yaml
+   ```
+   - `CLEAR_FILE_CACHE` — `GET /api/file_cache?op=clear&sync=false` on each BE, then poll
+     `brpc_metrics` until every disk's `file_cache_cache_size` drops below
+     `CLEAR_FILE_CACHE_MAX_SIZE_GB` (default 2 GB), timeout `CLEAR_FILE_CACHE_TIMEOUT_MIN`
+     minutes (default 60).
+   - `CLEAR_PAGE_CACHE` — toggles `disable_storage_page_cache` on→off via
+     `/api/update_config` with 10 s dwell each.
+   - `CLEAR_SYS_PAGE_CACHE` — `ssh ${CLEAR_CACHE_SSH_USER:-root}@<be>` and runs
+     `sync; echo 3 | sudo tee /proc/sys/vm/drop_caches`.
     Results are saved in the `results` directory under the corresponding path.
 
 ### View Results
@@ -142,6 +160,15 @@ This document details how to conduct performance testing for different databases
 3. Disable all result-cache features on the system under test during testing to ensure the validity of performance data.
 4. Ensure that the same test set uses consistent SQL logic and table data across different systems under test for fair comparison.
 5. You can directly use the provided test sets. Lakehouse data may not be publicly readable, so you need to prepare test data in advance. There will be a dedicated section later on how to prepare Iceberg datasets.
+6. For VeloDB / Doris cloud runs you can clear BE caches before each query via three
+   independent switches: `CLEAR_FILE_CACHE`, `CLEAR_PAGE_CACHE`, `CLEAR_SYS_PAGE_CACHE`.
+   All of them require `BE_HOSTS` (comma-separated). `CLEAR_CACHE_SCOPE` controls timing
+   (`cold` = only before run 1 of each query; `every_run` = before every run).
+   `CLEAR_FILE_CACHE` talks to each BE's HTTP API on `BE_HTTP_PORT` (default 8040) and
+   polls `BE_BRPC_PORT` (default 8060) until `file_cache_cache_size` falls below
+   `CLEAR_FILE_CACHE_MAX_SIZE_GB` (default 2) or `CLEAR_FILE_CACHE_TIMEOUT_MIN`
+   (default 60) elapses. `CLEAR_SYS_PAGE_CACHE` SSHes to each BE as
+   `CLEAR_CACHE_SSH_USER` (default `root`) and runs `drop_caches`.
 
 ### Testing Steps
 

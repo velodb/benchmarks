@@ -10,22 +10,22 @@ engine:
     user: "${DB_USER:-root}"
     password: "${PASSWORD:-}"
     db: "${DB:-hits}"
-    clear_file_cache: "${CLEAR_FILE_CACHE:-false}"
-    clear_page_cache: "${CLEAR_PAGE_CACHE:-false}"
-    clear_sys_page_cache: "${CLEAR_SYS_PAGE_CACHE:-false}"
-    clear_cache_scope: "${CLEAR_CACHE_SCOPE:-cold}"
     be_hosts: "${BE_HOSTS:-}"
     be_http_port: "${BE_HTTP_PORT:-8040}"
     be_brpc_port: "${BE_BRPC_PORT:-8060}"
-    clear_file_cache_max_size_gb: "${CLEAR_FILE_CACHE_MAX_SIZE_GB:-2}"
-    clear_file_cache_timeout_min: "${CLEAR_FILE_CACHE_TIMEOUT_MIN:-60}"
-    clear_cache_ssh_user: "${CLEAR_CACHE_SSH_USER:-root}"
 
 # Benchmark parameters
 parameters:
   load: "${LOAD:-false}"
   query: "${QUERY:-false}"
   query_times: "${QUERY_TIMES:-3}"
+  clear_file_cache: "${CLEAR_FILE_CACHE:-false}"
+  clear_page_cache: "${CLEAR_PAGE_CACHE:-false}"
+  clear_sys_page_cache: "${CLEAR_SYS_PAGE_CACHE:-false}"
+  clear_cache_scope: "${CLEAR_CACHE_SCOPE:-cold}"
+  clear_file_cache_max_size_gb: "${CLEAR_FILE_CACHE_MAX_SIZE_GB:-2}"
+  clear_file_cache_timeout_min: "${CLEAR_FILE_CACHE_TIMEOUT_MIN:-60}"
+  clear_cache_ssh_user: "${CLEAR_CACHE_SSH_USER:-root}"
 
 # Test resource paths (relative to this YAML file)
 paths:
