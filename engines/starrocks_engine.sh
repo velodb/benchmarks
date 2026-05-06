@@ -142,6 +142,28 @@ engine_run_sql() {
     fi
 }
 
+# 2.2. Get row count of a loaded table
+engine_get_table_rows() {
+    local table="$1"
+    local host="${fe_host:-127.0.0.1}"
+    local port="${fe_query_port:-9030}"
+    local sys_user="${user:-root}"
+    local current_db="${db:-}"
+
+    local count
+    count="$(MYSQL_PWD="${password:-}" mysql -h"${host}" -P"${port}" -u"${sys_user}" -D"${current_db}" \
+        -N -s -e "SELECT COUNT(*) FROM ${table};" 2>/dev/null || true)"
+    count="${count%%$'\n'*}"
+    count="${count//$'\r'/}"
+
+    if [[ "$count" =~ ^[0-9]+$ ]]; then
+        echo "$count"
+    else
+        echo "0"
+    fi
+
+    return 0
+}
 engine_set_auto_analyze() {
     local enabled="$1"
     local collect="false"

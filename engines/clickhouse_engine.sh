@@ -129,6 +129,33 @@ engine_run_sql() {
     fi
 }
 
+# 2.2. Get row count of a loaded table
+engine_get_table_rows() {
+    local table="$1"
+    local args=(
+        "--host=$clickhouse_host"
+        "--user=$user"
+        "--database=$db"
+    )
+
+    if [ -n "${password:-}" ]; then
+        args+=("--secure" "--password=$password")
+    fi
+
+    local count
+    count="$($CLICKHOUSE_CMD "${args[@]}" --query="SELECT count() FROM ${table};" 2>/dev/null || true)"
+    count="${count%%$'\n'*}"
+    count="${count//$'\r'/}"
+
+    if [[ "$count" =~ ^[0-9]+$ ]]; then
+        echo "$count"
+    else
+        echo "0"
+    fi
+
+    return 0
+}
+
 # 3. Generate JDBC DataSource XML configuration for ClickHouse
 engine_get_jdbc_datasource() {
     # Escape any special characters in the password
