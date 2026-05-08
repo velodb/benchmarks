@@ -120,6 +120,8 @@ engine_run_sql_file() {
 engine_run_sql() {
     local db="$1"
     local sql_statement="$2"
+    local error_file=""
+    local status=0
     
     if [ -z "$sql_statement" ]; then
         echo "ERROR: SQL statement cannot be empty" >&2
@@ -133,12 +135,22 @@ engine_run_sql() {
     local args=(-h"$fe_host" -P"$fe_query_port" -u"$user")
     [ -n "$db" ] && args+=(-D"$db")
 
-    # Execute the SQL statement
-    if output=$(mysql "${args[@]}" -e "$sql_statement" 2>&1); then
+    error_file="$(mktemp "${TMPDIR:-/tmp}/starrocks_mysql_stderr.XXXXXX")" || {
+        echo "ERROR: Failed to create temporary stderr file" >&2
+        return 1
+    }
+
+    if mysql "${args[@]}" --batch --skip-column-names --quick -e "$sql_statement" >/dev/null 2>"$error_file"; then
+        rm -f "$error_file"
         return 0
     else
+        status=$?
         echo "ERROR: Failed to execute SQL statement: $sql_statement" >&2
-        return 1
+        if [ -s "$error_file" ]; then
+            cat "$error_file" >&2
+        fi
+        rm -f "$error_file"
+        return "$status"
     fi
 }
 
