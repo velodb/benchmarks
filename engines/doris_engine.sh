@@ -191,7 +191,7 @@ engine_run_sql() {
     if [ "$capture_last_query_id" = "true" ]; then
         local normalized_sql
         normalized_sql=$(printf '%s' "$sql_statement" | sed -e ':trim' -e 's/[[:space:]]*$//' \
-            -e '/;$/ { s/;*$//; b trim; }')
+            -e '/;$/ {' -e 's/;*$//' -e 'b trim' -e '}')
         mysql_sql="${normalized_sql}; select last_query_id();"
     fi
 
@@ -200,16 +200,26 @@ engine_run_sql() {
         echo "ERROR: Failed to create temporary stderr file" >&2
         return 1
     }
-    if output=$(mysql "${args[@]}" --batch --skip-column-names \
-        -e "$mysql_sql" 2>"$error_file"); then
-        rm -f "$error_file"
-        if [ "$capture_last_query_id" = "true" ]; then
-            # The last non-empty line of stdout is the query ID.
-            echo "$output" | tail -n 1 > "$last_query_id_file"
+
+    if [ "$capture_last_query_id" = "true" ]; then
+        if mysql "${args[@]}" --batch --skip-column-names --quick -e "$mysql_sql" 2>"$error_file" \
+            | awk 'NF { last = $0 } END { if (last != "") print last }' > "$last_query_id_file"; then
+            status=${PIPESTATUS[0]}
+        else
+            status=${PIPESTATUS[0]}
         fi
+    else
+        if mysql "${args[@]}" --batch --skip-column-names --quick -e "$mysql_sql" >/dev/null 2>"$error_file"; then
+            status=0
+        else
+            status=$?
+        fi
+    fi
+
+    if [ "$status" -eq 0 ]; then
+        rm -f "$error_file"
         return 0
     else
-        status=$?
         echo "ERROR: Failed to execute SQL statement: $sql_statement" >&2
         if [ -s "$error_file" ]; then
             cat "$error_file" >&2
