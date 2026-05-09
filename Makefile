@@ -1,3 +1,5 @@
+THIRDPATY_URL ?= https://bench-dataset.oss-cn-beijing.aliyuncs.com/thirdpaty/benchmark_thirdpaty.tar.gz
+
 .PHONY: help result dist clean thirdpaty
 help:
 	@echo "Available targets:"
@@ -5,6 +7,7 @@ help:
 	@echo "  dist            - Create a tar.gz archive of the benchmarks"
 	@echo "  clean           - Remove generated benchmark archive"
 	@echo "  thirdpaty       - Download and extract third-party tools"
+	@echo "                   Override with THIRDPATY_URL=<url>"
 	@echo "  help            - Show this help message"
 
 
@@ -25,6 +28,6 @@ clean:
 	rm -f benchmarks.tar.gz
 
 thirdpaty:
-	wget -nv https://bench-dataset.oss-cn-beijing.aliyuncs.com/thirdpaty/benchmark_thirdpaty.tar.gz -O benchmark_thirdpaty.tar.gz
+	wget -nv $(THIRDPATY_URL) -O benchmark_thirdpaty.tar.gz
 	tar -xzf benchmark_thirdpaty.tar.gz
 	rm -f benchmark_thirdpaty.tar.gz
