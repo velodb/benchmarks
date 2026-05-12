@@ -52,24 +52,15 @@ execute_vectordbbench_task() {
     local base_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     
     # 1. Environment and Dependency Check
-    export PATH="$PATH:$HOME/.local/bin"
-    local vdb_cmd="vectordbbench"
+    if ! init_vectordbbench; then
+        echo "ERROR: Failed to initialize VectorDBBench." >&2
+        return 1
+    fi
 
-    if ! command -v "$vdb_cmd" > /dev/null 2>&1; then
-        echo "  VectorDBBench not found. Attempting to install..."
-        if ! pip3 install --user -U vectordb-bench doris-vector-search mysql-connector==2.2.9; then
-            echo "ERROR: Failed to install VectorDBBench dependencies via pip3."
-            return 1
-        fi
-        
-        # Verify again after install
-        if [ -f "$HOME/.local/bin/vectordbbench" ]; then
-            vdb_cmd="$HOME/.local/bin/vectordbbench"
-        else
-            echo "ERROR: vectordbbench installed but not found in $HOME/.local/bin."
-            return 1
-        fi
-        echo "  VectorDBBench installed successfully."
+    local vdb_cmd="${VECTORDBBENCH_BIN:-$(command -v vectordbbench)}"
+    if [ -z "$vdb_cmd" ] || [ ! -x "$vdb_cmd" ]; then
+        echo "ERROR: VectorDBBench binary not found after initialization." >&2
+        return 1
     fi
 
     # 2. Extract and expand configurations from YAML using yq

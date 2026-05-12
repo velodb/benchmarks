@@ -160,3 +160,88 @@ init_sysbench() {
     echo "ERROR: sysbench not found in tools directory or system PATH" >&2
     return 1
 }
+
+init_vectordbbench() {
+    _init_tools_dir
+
+    local wheelhouse_dir="$TOOLS_DIR/vectordb_wheelhouse"
+    local requirements_file="$TOOLS_DIR/vectordb_requirements.txt"
+    local venv_dir="$TOOLS_DIR/vectordbbench_venv"
+    local venv_python="$venv_dir/bin/python"
+    local vdb_binary="$venv_dir/bin/vectordbbench"
+    local python_binary=""
+
+    if [ -x "$vdb_binary" ]; then
+        export PATH="$venv_dir/bin:$PATH"
+        export VECTORDBBENCH_BIN="$vdb_binary"
+        echo "Using local VectorDBBench: $vdb_binary"
+        return 0
+    fi
+
+    python_binary="$(command -v python3 || true)"
+    if [ -d "$wheelhouse_dir" ] && [ -n "$python_binary" ]; then
+        echo "Installing VectorDBBench from local wheelhouse..."
+        if [ ! -x "$venv_python" ] && ! "$python_binary" -m venv "$venv_dir"; then
+            echo "WARNING: Failed to create local VectorDBBench venv: $venv_dir" >&2
+        fi
+
+        if [ -x "$venv_python" ]; then
+            if ! "$venv_python" -m pip --version >/dev/null 2>&1; then
+                "$venv_python" -m ensurepip --upgrade >/dev/null 2>&1 || true
+            fi
+
+            if "$venv_python" -m pip --version >/dev/null 2>&1; then
+                "$venv_python" -m pip install --disable-pip-version-check \
+                    --no-index \
+                    --find-links "$wheelhouse_dir" \
+                    setuptools >/dev/null 2>&1 || true
+
+                local install_args=(
+                    --disable-pip-version-check
+                    --no-index
+                    --find-links "$wheelhouse_dir"
+                    --no-build-isolation
+                )
+
+                if [ -f "$requirements_file" ]; then
+                    if "$venv_python" -m pip install "${install_args[@]}" -r "$requirements_file"; then
+                        export PATH="$venv_dir/bin:$PATH"
+                        export VECTORDBBENCH_BIN="$vdb_binary"
+                        echo "Using local VectorDBBench: $vdb_binary"
+                        return 0
+                    fi
+                elif "$venv_python" -m pip install "${install_args[@]}" vectordb-bench doris-vector-search mysql-connector==2.2.9; then
+                    export PATH="$venv_dir/bin:$PATH"
+                    export VECTORDBBENCH_BIN="$vdb_binary"
+                    echo "Using local VectorDBBench: $vdb_binary"
+                    return 0
+                fi
+
+                echo "WARNING: Failed to install VectorDBBench from local wheelhouse, falling back to other options." >&2
+            fi
+        fi
+    elif [ -d "$wheelhouse_dir" ]; then
+        echo "WARNING: python3 not found, cannot install VectorDBBench from local wheelhouse." >&2
+    fi
+
+    if command -v vectordbbench >/dev/null 2>&1; then
+        export VECTORDBBENCH_BIN="$(command -v vectordbbench)"
+        echo "Using system VectorDBBench: $VECTORDBBENCH_BIN"
+        return 0
+    fi
+
+    if [ -n "$python_binary" ]; then
+        echo "Installing VectorDBBench via user pip..."
+        if "$python_binary" -m pip install --user -U vectordb-bench doris-vector-search mysql-connector==2.2.9; then
+            export PATH="$HOME/.local/bin:$PATH"
+            if command -v vectordbbench >/dev/null 2>&1; then
+                export VECTORDBBENCH_BIN="$(command -v vectordbbench)"
+                echo "Using user-installed VectorDBBench: $VECTORDBBENCH_BIN"
+                return 0
+            fi
+        fi
+    fi
+
+    echo "ERROR: VectorDBBench not found and installation failed" >&2
+    return 1
+}
