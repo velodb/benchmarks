@@ -528,7 +528,7 @@ engine_get_jdbc_sampler_name() {
 # Optional: enable query profile collection
 engine_enable_profile() {
     export MYSQL_PWD="${password:-}"
-    mysql -h"$fe_host" -P"$fe_query_port" -u"$user" -e "set global enable_profile=true;set global profile_level=2;" >/dev/null 2>&1
+    mysql -h"$fe_host" -P"$fe_query_port" -u"$user" -e "set global enable_profile=true;set global profile_level=1;" >/dev/null 2>&1
 }
 
 # Optional: disable query profile collection
