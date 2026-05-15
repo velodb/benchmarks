@@ -83,6 +83,10 @@ check_dependencies() {
         init_jmeter_tools
     fi
 
+    if [[ "${vectordbbench,,}" == "true" ]] && ! init_vectordbbench; then
+        die "Failed to initialize VectorDBBench"
+    fi
+
     if is_sysbench_enabled; then
         init_sysbench
     fi

@@ -16,9 +16,22 @@ _init_tools_dir() {
     fi
 }
 
+init_common_tools() {
+    _init_tools_dir
+
+    if [ -d "$TOOLS_DIR/bin" ]; then
+        export PATH="$TOOLS_DIR/bin:$PATH"
+    fi
+
+    if [ -d "$TOOLS_DIR/lib" ]; then
+        export LD_LIBRARY_PATH="$TOOLS_DIR/lib:${LD_LIBRARY_PATH:-}"
+    fi
+}
+
 # Initialize yq from tools directory
 init_yq() {
     _init_tools_dir
+    init_common_tools
     
     local yq_dir="$TOOLS_DIR/yq_dir"
     local yq_binary="$yq_dir/yq"
@@ -113,6 +126,7 @@ init_jmeter() {
 # Initialize all tools
 init_basic_tools() {
     echo "Initializing tools..."
+    init_common_tools
     
     # Always initialize yq (required)
     if ! init_yq; then
@@ -158,5 +172,152 @@ init_sysbench() {
     fi
 
     echo "ERROR: sysbench not found in tools directory or system PATH" >&2
+    return 1
+}
+
+init_mysql_client() {
+    _init_tools_dir
+    init_common_tools
+
+    local mysql_dir="$TOOLS_DIR/mysql_client_dir"
+    local mysql_binary="$mysql_dir/bin/mysql"
+    local mysql_archive="$TOOLS_DIR/mysql_client_dir.tar.gz"
+
+    if [ ! -x "$mysql_binary" ] && [ -f "$mysql_archive" ]; then
+        echo "Extracting mysql client..."
+        rm -rf "$mysql_dir"
+        tar -xzf "$mysql_archive" -C "$TOOLS_DIR"
+    fi
+
+    if [ -x "$mysql_binary" ]; then
+        export PATH="$mysql_dir/bin:$PATH"
+        if [ -d "$mysql_dir/lib" ]; then
+            export LD_LIBRARY_PATH="$mysql_dir/lib:${LD_LIBRARY_PATH:-}"
+        fi
+        echo "Using local mysql client: $mysql_binary"
+        return 0
+    fi
+
+    if [ -x "$TOOLS_DIR/bin/mysql" ]; then
+        echo "Using local mysql client: $TOOLS_DIR/bin/mysql"
+        return 0
+    fi
+
+    if command -v mysql >/dev/null 2>&1; then
+        echo "Using system mysql client"
+        return 0
+    fi
+
+    echo "ERROR: mysql client not found in tools directory or system PATH" >&2
+    return 1
+}
+
+init_python_runtime() {
+    _init_tools_dir
+    init_common_tools
+
+    local python_dir="$TOOLS_DIR/python_dir"
+    local python_archive="$TOOLS_DIR/python_dir.tar.gz"
+    local python_binary="$python_dir/bin/python3"
+
+    if [ ! -x "$python_binary" ] && [ -f "$python_archive" ]; then
+        echo "Extracting Python..."
+        rm -rf "$python_dir"
+        mkdir -p "$python_dir"
+        tar -xzf "$python_archive" -C "$python_dir" --strip-components=1
+    fi
+
+    if [ -x "$python_binary" ]; then
+        export PATH="$python_dir/bin:$PATH"
+        export LD_LIBRARY_PATH="$python_dir/lib:${LD_LIBRARY_PATH:-}"
+        export PYTHONNOUSERSITE=1
+        if ! "$python_binary" -m pip --version >/dev/null 2>&1; then
+            "$python_binary" -m ensurepip --upgrade >/dev/null 2>&1 || true
+        fi
+        echo "Using local Python: $python_binary"
+        return 0
+    fi
+
+    return 1
+}
+
+init_vectordbbench() {
+    _init_tools_dir
+
+    local wheelhouse_dir="$TOOLS_DIR/vectordb_wheelhouse"
+    local requirements_file="$TOOLS_DIR/vectordb_requirements.txt"
+    local python_binary=""
+    local vdb_binary="$TOOLS_DIR/python_dir/bin/vectordbbench"
+    local use_local_python=false
+
+    init_common_tools
+
+    if [ -x "$vdb_binary" ]; then
+        export VECTORDBBENCH_BIN="$vdb_binary"
+        echo "Using local VectorDBBench: $VECTORDBBENCH_BIN"
+        return 0
+    fi
+
+    if init_python_runtime; then
+        python_binary="$TOOLS_DIR/python_dir/bin/python3"
+        use_local_python=true
+    else
+        python_binary="$(command -v python3 || true)"
+    fi
+
+    if command -v vectordbbench >/dev/null 2>&1; then
+        export VECTORDBBENCH_BIN="$(command -v vectordbbench)"
+        echo "Using existing VectorDBBench: $VECTORDBBENCH_BIN"
+        return 0
+    fi
+
+    if ! init_mysql_client; then
+        return 1
+    fi
+
+    if [ "$use_local_python" = true ] && [ -d "$wheelhouse_dir" ]; then
+        echo "Installing VectorDBBench from local wheelhouse..."
+        if "$python_binary" -m pip --version >/dev/null 2>&1; then
+            "$python_binary" -m pip install --disable-pip-version-check \
+                --no-index \
+                --find-links "$wheelhouse_dir" \
+                setuptools >/dev/null 2>&1 || true
+
+            local install_args=(
+                --disable-pip-version-check
+                --no-index
+                --find-links "$wheelhouse_dir"
+                --no-build-isolation
+            )
+
+            if [ -f "$requirements_file" ]; then
+                if "$python_binary" -m pip install "${install_args[@]}" -r "$requirements_file"; then
+                    if [ -x "$vdb_binary" ]; then
+                        export VECTORDBBENCH_BIN="$vdb_binary"
+                        echo "Using local VectorDBBench: $VECTORDBBENCH_BIN"
+                        return 0
+                    fi
+                fi
+            elif "$python_binary" -m pip install "${install_args[@]}" vectordb-bench doris-vector-search mysql-connector==2.2.9; then
+                if [ -x "$vdb_binary" ]; then
+                    export VECTORDBBENCH_BIN="$vdb_binary"
+                    echo "Using local VectorDBBench: $VECTORDBBENCH_BIN"
+                    return 0
+                fi
+            fi
+
+            echo "WARNING: Failed to install VectorDBBench from local wheelhouse, falling back to other options." >&2
+        fi
+    elif [ -d "$wheelhouse_dir" ]; then
+        echo "WARNING: local Python runtime not found, skip VectorDBBench local wheelhouse." >&2
+    fi
+
+    if command -v vectordbbench >/dev/null 2>&1; then
+        export VECTORDBBENCH_BIN="$(command -v vectordbbench)"
+        echo "Using system VectorDBBench: $VECTORDBBENCH_BIN"
+        return 0
+    fi
+
+    echo "ERROR: VectorDBBench not found in third-party tools or system PATH" >&2
     return 1
 }

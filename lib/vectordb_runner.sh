@@ -3,6 +3,48 @@
 # VectorDBBench Runner for Benchmark Framework
 # This script handles the execution of zilliztech/VectorDBBench
 
+extract_vectordbbench_metrics_json() {
+    local result_file="$1"
+    local metrics_file="$2"
+
+    if ! jq -e '
+        def metrics:
+          if ((.results? | type) == "array"
+              and (.results | length) > 0
+              and ((.results[0].metrics? | type) == "object")) then
+            .results[0].metrics
+          elif ((.metrics? | type) == "object") then
+            .metrics
+          else
+            .
+          end;
+
+        metrics as $m
+        | {
+            qps: $m.qps,
+            serial_latency_p99: $m.serial_latency_p99,
+            recall: $m.recall,
+            insert_duration: ($m.insert_duration // $m.insert_dur),
+            optimize_duration: ($m.optimize_duration // $m.optimize_dur),
+            load_duration: ($m.load_duration // $m.load_dur)
+          } as $result
+        | ([ $result | to_entries[] | select(.value == null) | .key ]) as $missing
+        | if ($missing | length) > 0 then
+            error("missing metric fields: " + ($missing | join(", ")))
+          elif (($result.qps <= 0) and ($result.load_duration <= 0)) then
+            error("metrics are empty (Zero QPS/Load Duration)")
+          else
+            $result
+          end
+    ' "$result_file" > "$metrics_file"; then
+        rm -f "$metrics_file"
+        echo "Error extracting VectorDBBench metrics from $result_file" >&2
+        return 1
+    fi
+
+    jq -r 'to_entries[] | "\(.key): \(.value)"' "$metrics_file"
+}
+
 execute_vectordbbench_task() {
     echo "==== Starting VectorDBBench Phase ===="
     
@@ -10,24 +52,15 @@ execute_vectordbbench_task() {
     local base_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     
     # 1. Environment and Dependency Check
-    export PATH="$PATH:$HOME/.local/bin"
-    local vdb_cmd="vectordbbench"
+    if ! init_vectordbbench; then
+        echo "ERROR: Failed to initialize VectorDBBench." >&2
+        return 1
+    fi
 
-    if ! command -v "$vdb_cmd" > /dev/null 2>&1; then
-        echo "  VectorDBBench not found. Attempting to install..."
-        if ! pip3 install --user -U vectordb-bench doris-vector-search mysql-connector==2.2.9; then
-            echo "ERROR: Failed to install VectorDBBench dependencies via pip3."
-            return 1
-        fi
-        
-        # Verify again after install
-        if [ -f "$HOME/.local/bin/vectordbbench" ]; then
-            vdb_cmd="$HOME/.local/bin/vectordbbench"
-        else
-            echo "ERROR: vectordbbench installed but not found in $HOME/.local/bin."
-            return 1
-        fi
-        echo "  VectorDBBench installed successfully."
+    local vdb_cmd="${VECTORDBBENCH_BIN:-$(command -v vectordbbench)}"
+    if [ -z "$vdb_cmd" ] || [ ! -x "$vdb_cmd" ]; then
+        echo "ERROR: VectorDBBench binary not found after initialization." >&2
+        return 1
     fi
 
     # 2. Extract and expand configurations from YAML using yq
@@ -59,6 +92,9 @@ execute_vectordbbench_task() {
 
     # 4. Ensure Database Exists (Doris requires explicit creation)
     echo "  Ensuring database $db exists..."
+    if declare -f init_mysql_client >/dev/null 2>&1; then
+        init_mysql_client || return 1
+    fi
     export MYSQL_PWD="${password:-}"
     mysql -h"$fe_host" -P"$fe_query_port" -u"$user" -e "CREATE DATABASE IF NOT EXISTS $db" || echo "Warning: Failed to ensure database exists, attempting to proceed..."
 
@@ -91,30 +127,22 @@ execute_vectordbbench_task() {
         result_file=$(ls -t "$result_dir"/Doris/result_*_"${task_label}"_*.json 2>/dev/null | head -n 1)
         
         if [ -n "$result_file" ] && [ -f "$result_file" ]; then
-            if grep -q '"qps": [0-9.]*[1-9]' "$result_file" || grep -q '"load_dur": [0-9.]*[1-9]' "$result_file"; then
+            local compact_metrics
+            local vectordb_metrics_file="${RESULT_DIR:-$result_dir}/vectordb_metrics.json"
+            mkdir -p "$(dirname "$vectordb_metrics_file")"
+            if compact_metrics=$(extract_vectordbbench_metrics_json "$result_file" "$vectordb_metrics_file"); then
                 echo "  Result validation successful: $result_file"
+                echo "  VectorDBBench metrics written: $vectordb_metrics_file"
                 echo ""
                 echo "=========================================================="
                 echo "            VectorDBBench Performance Results             "
                 echo "=========================================================="
-                python3 -c "
-import json, sys
-try:
-    with open('$result_file', 'r') as f:
-        data = json.load(f)
-        results = data.get('results', [])
-        if results:
-            m = results[0].get('metrics', {})
-            fields = ['qps', 'serial_latency_p99', 'recall', 'insert_duration', 'optimize_duration', 'load_duration']
-            print('\n'.join([f'{field}: {m.get(field, \"N/A\")}' for field in fields]))
-except Exception as e:
-    print(f'Error parsing result JSON: {e}')
-"
+                printf "%s\n" "$compact_metrics"
                 echo "=========================================================="
                 echo "==== VectorDBBench Phase Completed Successfully ===="
                 return 0
             else
-                echo "  ERROR: VectorDBBench finished but metrics are empty (Zero QPS/Load Duration). Check logs for process crashes." >&2
+                echo "  ERROR: VectorDBBench finished but result metrics are invalid. Check logs for process crashes." >&2
                 return 1
             fi
         else

@@ -14,6 +14,7 @@ generate_result() {
     local jmeter_config="$RESULT_DIR/jmeter_config.json"
     local statistics_json="$RESULT_DIR/html_report/statistics.json"
     local sysbench_metrics_json="$RESULT_DIR/sysbench_metrics.json"
+    local vectordb_metrics_json="$RESULT_DIR/vectordb_metrics.json"
     local create_time
     create_time=$(date '+%Y-%m-%d')
 
@@ -176,6 +177,17 @@ generate_result() {
         else
             rm -f "$sysbench_tmp_json"
             echo "ERROR: Failed to merge sysbench metrics into result.json" >&2
+        fi
+    fi
+
+    if [ -f "$vectordb_metrics_json" ]; then
+        local vectordb_tmp_json="$RESULT_DIR/.result_vectordb.json"
+        if jq --argjson vectordb_metrics "$(cat "$vectordb_metrics_json")" \
+            '.results.vectordb = $vectordb_metrics' "$result_json" > "$vectordb_tmp_json"; then
+            mv "$vectordb_tmp_json" "$result_json"
+        else
+            rm -f "$vectordb_tmp_json"
+            echo "ERROR: Failed to merge VectorDBBench metrics into result.json" >&2
         fi
     fi
 

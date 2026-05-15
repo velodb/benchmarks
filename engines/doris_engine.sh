@@ -48,6 +48,10 @@ should_clear_cache_for_run() {
 # 1. Initialize and check Doris dependencies
 engine_init() {
     echo "Initializing Doris engine..."
+
+    if declare -f init_mysql_client >/dev/null 2>&1; then
+        init_mysql_client || return 1
+    fi
     
     # Initialize MySQL JDBC driver for JMeter if needed
     if [[ "${jmeter:-}" == "true" ]] && [ -n "${JMETER_HOME:-}" ]; then
