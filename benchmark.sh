@@ -994,7 +994,7 @@ main() {
     check_dependencies
     
     # Load other parameters
-    session="${session:-false}"
+    session="${session:-true}"
     load="${load:-false}"
     analyze="${analyze:-false}"
     analyze_type="${analyze_type:-${ANALYZE_TYPE:-analyze_full}}"
