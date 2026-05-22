@@ -37,3 +37,29 @@ storage:
   bucket: "${STORAGE_BUCKET:-bench-dataset}"
   access_key: "${STORAGE_ACCESS_KEY:-xxx}"
   secret_key: "${STORAGE_SECRET_KEY:-xxx}"
+
+tables:
+  customer_demographics: 1920800
+  reason: 65
+  warehouse: 20
+  date_dim: 73049
+  catalog_sales: 1439980416
+  call_center: 42
+  inventory: 783000000
+  catalog_returns: 143996756
+  household_demographics: 7200
+  customer_address: 6000000
+  income_band: 20
+  catalog_page: 30000
+  item: 300000
+  web_returns: 71997522
+  web_site: 54
+  promotion: 1500
+  web_sales: 720000376
+  store: 1002
+  web_page: 3000
+  time_dim: 86400
+  store_returns: 287999764
+  store_sales: 2879987999
+  ship_mode: 20
+  customer: 12000000
