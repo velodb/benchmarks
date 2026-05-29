@@ -80,12 +80,17 @@ engine_init() {
         done
     fi
     
-    if [[ "${clear_file_cache:-false}" == "true" || "${clear_page_cache:-false}" == "true" ]]; then
+    local sys_cache_method="${clear_sys_page_cache_method:-ssh}"
+    sys_cache_method="${sys_cache_method,,}"
+
+    if [[ "${clear_file_cache:-false}" == "true" \
+        || "${clear_page_cache:-false}" == "true" \
+        || ( "${clear_sys_page_cache:-false}" == "true" && "$sys_cache_method" == "http" ) ]]; then
         if ! command -v curl >/dev/null 2>&1; then
             missing_deps+=("curl")
         fi
     fi
-    if [[ "${clear_sys_page_cache:-false}" == "true" ]]; then
+    if [[ "${clear_sys_page_cache:-false}" == "true" && "$sys_cache_method" == "ssh" ]]; then
         if ! command -v ssh >/dev/null 2>&1; then
             missing_deps+=("ssh")
         fi
@@ -338,9 +343,7 @@ engine_check_load_status() {
     mysql_engine_check_load_status "$@"
 }
 
-# Port of selectdb-qa ClearSystemPageCache:
-#   ssh root@<be> "echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null"
-clear_system_page_cache() {
+clear_system_page_cache_by_ssh() {
     local ssh_user="${clear_cache_ssh_user:-root}"
     local be
     for be in "${BE_HOSTS_ARR[@]}"; do
@@ -354,6 +357,51 @@ clear_system_page_cache() {
     done
     sleep 3
     return 0
+}
+
+# Yaochi cloud exposes sys-cache clearing through BE HTTP:
+#   GET http://<be>:8050/drop_sys_cache
+clear_system_page_cache_by_http() {
+    local port="${clear_sys_page_cache_http_port:-8050}"
+    local path="${clear_sys_page_cache_http_path:-/drop_sys_cache}"
+    local be
+
+    if [[ "$path" != /* ]]; then
+        path="/${path}"
+    fi
+
+    for be in "${BE_HOSTS_ARR[@]}"; do
+        echo "[${be}] GET ${path}"
+        if ! curl -fsS "http://${be}:${port}${path}"; then
+            echo "drop_sys_cache failed on ${be}" >&2
+            return 1
+        fi
+        echo
+    done
+    sleep 3
+    return 0
+}
+
+# Port of selectdb-qa ClearSystemPageCache:
+#   ssh root@<be> "echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null"
+# Or, for Yaochi cloud:
+#   GET http://<be>:8050/drop_sys_cache
+clear_system_page_cache() {
+    local method="${clear_sys_page_cache_method:-ssh}"
+    method="${method,,}"
+
+    case "$method" in
+        ssh)
+            clear_system_page_cache_by_ssh
+            ;;
+        http)
+            clear_system_page_cache_by_http
+            ;;
+        *)
+            echo "unsupported clear_sys_page_cache_method: ${clear_sys_page_cache_method}" >&2
+            return 1
+            ;;
+    esac
 }
 
 # Port of selectdb-qa ClearDorisPageCache:
