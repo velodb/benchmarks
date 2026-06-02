@@ -71,10 +71,11 @@ Our goal is to build `velodb.github.io/benchmarks` into the industry's most trus
    CLEAR_CACHE_SCOPE=before_query \
    bash benchmark.sh --config benchmarks/clickbench_update/percent_100/velodb-cloud/benchmark.yaml
    ```
-   - `CLEAR_FILE_CACHE` — `GET /api/file_cache?op=clear&sync=false` on each BE, then poll
-     `brpc_metrics` until every disk's `file_cache_cache_size` drops below
-     `CLEAR_FILE_CACHE_MAX_SIZE_GB` (default 2 GB), timeout `CLEAR_FILE_CACHE_TIMEOUT_MIN`
-     minutes (default 60).
+   - `CLEAR_FILE_CACHE` — authenticated
+     `GET /api/file_cache?op=clear&sync=true` on each BE using the benchmark
+     `DB_USER` / `PASSWORD`, then poll `brpc_metrics` until every disk's
+     `file_cache_cache_size` drops below `CLEAR_FILE_CACHE_MAX_SIZE_GB`
+     (default 2 GB), timeout `CLEAR_FILE_CACHE_TIMEOUT_MIN` minutes (default 60).
    - `CLEAR_PAGE_CACHE` — toggles `disable_storage_page_cache` on→off via
      `/api/update_config` with 10 s dwell each.
    - `CLEAR_SYS_PAGE_CACHE` — `ssh ${CLEAR_CACHE_SSH_USER:-root}@<be>` and runs
@@ -177,10 +178,11 @@ This document details how to conduct performance testing for different databases
    You can also set `COLD_QUERY_COUNT` and `HOT_QUERY_COUNT` to run the
    selectdb-qa cold/hot model: every cold run clears enabled caches first, hot
    runs do not clear cache, and the hot summary is the minimum hot run.
-   `CLEAR_FILE_CACHE` talks to each BE's HTTP API on `BE_HTTP_PORT` (default 8040) and
-   polls `BE_BRPC_PORT` (default 8060) until `file_cache_cache_size` falls below
-   `CLEAR_FILE_CACHE_MAX_SIZE_GB` (default 2) or `CLEAR_FILE_CACHE_TIMEOUT_MIN`
-   (default 60) elapses. `CLEAR_SYS_PAGE_CACHE` SSHes to each BE as
+   `CLEAR_FILE_CACHE` talks to each BE's HTTP API on `BE_HTTP_PORT` (default 8040)
+   using the benchmark `DB_USER` / `PASSWORD`, and polls `BE_BRPC_PORT` (default 8060)
+   until `file_cache_cache_size` falls below `CLEAR_FILE_CACHE_MAX_SIZE_GB`
+   (default 2) or `CLEAR_FILE_CACHE_TIMEOUT_MIN` (default 60) elapses.
+   `CLEAR_SYS_PAGE_CACHE` SSHes to each BE as
    `CLEAR_CACHE_SSH_USER` (default `root`) and runs `drop_caches`.
 
 ### Testing Steps

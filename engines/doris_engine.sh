@@ -421,13 +421,25 @@ _parse_file_cache_sizes() {
     awk '/file_cache_cache_size/ && !/gauge/ && !/HELP/ {print $NF}'
 }
 
-# Port of selectdb-qa ClearDorisFileCache:
-#   GET api/file_cache?op=clear&sync=false on each BE
-#   sleep 60, then every 30s poll brpc_metrics until every disk on every BE
-#   has file_cache_cache_size < max_size_gb * 1GB; re-trigger clear on BEs
-#   still above threshold. Timeout after timeout_min minutes.
-clear_doris_file_cache() {
+clear_doris_file_cache_on_be() {
+    local be="$1"
+    local label="${2:-clear}"
     local http_port="${be_http_port:-8040}"
+    local auth_user="${user:-root}"
+    local auth_password="${password:-}"
+
+    echo "[${be}] GET api/file_cache?op=clear&sync=true (${label})"
+    curl -fsS -u "${auth_user}:${auth_password}" -X GET \
+        "http://${be}:${http_port}/api/file_cache?op=clear&sync=true"
+}
+
+# Port of selectdb-qa ClearDorisFileCache:
+#   Clear Doris file cache using the benchmark DB credentials. Cloud clusters may
+#   reject unauthenticated cache-clear calls when the benchmark user is non-root.
+#   After the synchronous clear request returns, poll brpc_metrics until every disk
+#   on every BE has file_cache_cache_size < max_size_gb * 1GB; re-trigger clear on
+#   BEs still above threshold. Timeout after timeout_min minutes.
+clear_doris_file_cache() {
     local brpc_port="${be_brpc_port:-8060}"
     local max_gb="${clear_file_cache_max_size_gb:-2}"
     local timeout_min="${clear_file_cache_timeout_min:-60}"
@@ -435,15 +447,12 @@ clear_doris_file_cache() {
     max_bytes=$(awk -v g="$max_gb" 'BEGIN{printf "%.0f", g*1024*1024*1024}')
     local be
     for be in "${BE_HOSTS_ARR[@]}"; do
-        echo "[${be}] GET api/file_cache?op=clear&sync=false"
-        if ! curl -fsS "http://${be}:${http_port}/api/file_cache?op=clear&sync=false"; then
+        if ! clear_doris_file_cache_on_be "$be"; then
             echo "clear file_cache failed on ${be}" >&2
             return 1
         fi
         echo
     done
-    echo "wait 60s for async clear"
-    sleep 60
 
     local deadline
     deadline=$(( $(date +%s) + timeout_min * 60 ))
@@ -490,8 +499,7 @@ clear_doris_file_cache() {
         if [ "${#need_reclear[@]}" -gt 0 ]; then
             echo "re-clearing BEs still above threshold: ${need_reclear[*]}"
             for be in "${need_reclear[@]}"; do
-                echo "[${be}] GET api/file_cache?op=clear&sync=false (re-clear)"
-                curl -fsS "http://${be}:${http_port}/api/file_cache?op=clear&sync=false" || \
+                clear_doris_file_cache_on_be "$be" "re-clear" || \
                     echo "re-clear failed on ${be}" >&2
                 echo
             done
