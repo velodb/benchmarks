@@ -27,6 +27,9 @@ parameters:
   clear_cache_scope: "${CLEAR_CACHE_SCOPE:-before_query}"
   clear_file_cache_max_size_gb: "${CLEAR_FILE_CACHE_MAX_SIZE_GB:-2}"
   clear_file_cache_timeout_min: "${CLEAR_FILE_CACHE_TIMEOUT_MIN:-60}"
+  clear_sys_page_cache_method: "${CLEAR_SYS_PAGE_CACHE_METHOD:-ssh}"
+  clear_sys_page_cache_http_port: "${CLEAR_SYS_PAGE_CACHE_HTTP_PORT:-8050}"
+  clear_sys_page_cache_http_path: "${CLEAR_SYS_PAGE_CACHE_HTTP_PATH:-/drop_sys_cache}"
   clear_cache_ssh_user: "${CLEAR_CACHE_SSH_USER:-root}"
 
 # Test resource paths (relative to this YAML file)

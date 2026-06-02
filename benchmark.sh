@@ -1110,6 +1110,9 @@ main() {
     be_brpc_port="${be_brpc_port:-${BE_BRPC_PORT:-8060}}"
     clear_file_cache_max_size_gb="${clear_file_cache_max_size_gb:-${CLEAR_FILE_CACHE_MAX_SIZE_GB:-2}}"
     clear_file_cache_timeout_min="${clear_file_cache_timeout_min:-${CLEAR_FILE_CACHE_TIMEOUT_MIN:-60}}"
+    clear_sys_page_cache_method="${clear_sys_page_cache_method:-${CLEAR_SYS_PAGE_CACHE_METHOD:-ssh}}"
+    clear_sys_page_cache_http_port="${clear_sys_page_cache_http_port:-${CLEAR_SYS_PAGE_CACHE_HTTP_PORT:-8050}}"
+    clear_sys_page_cache_http_path="${clear_sys_page_cache_http_path:-${CLEAR_SYS_PAGE_CACHE_HTTP_PATH:-/drop_sys_cache}}"
     clear_cache_ssh_user="${clear_cache_ssh_user:-${CLEAR_CACHE_SSH_USER:-root}}"
 
     if [[ "${drop_database,,}" != "true" ]]; then
@@ -1132,6 +1135,7 @@ main() {
     fi
 
     clear_cache_scope="${clear_cache_scope,,}"
+    clear_sys_page_cache_method="${clear_sys_page_cache_method,,}"
     [[ "${clear_file_cache,,}" != "true" ]] && clear_file_cache="false"
     [[ "${clear_page_cache,,}" != "true" ]] && clear_page_cache="false"
     [[ "${clear_sys_page_cache,,}" != "true" ]] && clear_sys_page_cache="false"
@@ -1157,6 +1161,14 @@ main() {
         fi
         if ! [[ "$be_brpc_port" =~ ^[0-9]+$ ]]; then
             die "Invalid be_brpc_port: ${be_brpc_port}"
+        fi
+        if [[ "${clear_sys_page_cache:-false}" == "true" ]]; then
+            if [[ "$clear_sys_page_cache_method" != "ssh" && "$clear_sys_page_cache_method" != "http" ]]; then
+                die "Invalid clear_sys_page_cache_method: ${clear_sys_page_cache_method} (allowed: ssh, http)"
+            fi
+            if [[ "$clear_sys_page_cache_method" == "http" ]] && ! [[ "$clear_sys_page_cache_http_port" =~ ^[0-9]+$ ]]; then
+                die "Invalid clear_sys_page_cache_http_port: ${clear_sys_page_cache_http_port}"
+            fi
         fi
         if ! [[ "$clear_file_cache_max_size_gb" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
             die "Invalid clear_file_cache_max_size_gb: ${clear_file_cache_max_size_gb}"
