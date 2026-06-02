@@ -61,20 +61,21 @@ Our goal is to build `velodb.github.io/benchmarks` into the industry's most trus
     ```bash
     LOAD=false JMETER_THREADS=100 bash benchmark.sh --config ...
     ```
-   For cloud cold-run scenarios on VeloDB / Doris, enable BE-side cache clearing.
+   For cloud scenarios on VeloDB / Doris, enable BE-side cache clearing.
    `BE_HOSTS` is required; each flag is independent and can be combined:
    ```bash
    BE_HOSTS=10.0.0.11,10.0.0.12 \
    CLEAR_FILE_CACHE=true \
    CLEAR_PAGE_CACHE=true \
    CLEAR_SYS_PAGE_CACHE=true \
-   CLEAR_CACHE_SCOPE=cold \
+   CLEAR_CACHE_SCOPE=before_query \
    bash benchmark.sh --config benchmarks/clickbench_update/percent_100/velodb-cloud/benchmark.yaml
    ```
-   - `CLEAR_FILE_CACHE` — `GET /api/file_cache?op=clear&sync=false` on each BE, then poll
-     `brpc_metrics` until every disk's `file_cache_cache_size` drops below
-     `CLEAR_FILE_CACHE_MAX_SIZE_GB` (default 2 GB), timeout `CLEAR_FILE_CACHE_TIMEOUT_MIN`
-     minutes (default 60).
+   - `CLEAR_FILE_CACHE` — authenticated
+     `GET /api/file_cache?op=clear&sync=true` on each BE using the benchmark
+     `DB_USER` / `PASSWORD`, then poll `brpc_metrics` until every disk's
+     `file_cache_cache_size` drops below `CLEAR_FILE_CACHE_MAX_SIZE_GB`
+     (default 2 GB), timeout `CLEAR_FILE_CACHE_TIMEOUT_MIN` minutes (default 60).
    - `CLEAR_PAGE_CACHE` — toggles `disable_storage_page_cache` on→off via
      `/api/update_config` with 10 s dwell each.
    - `CLEAR_SYS_PAGE_CACHE` — defaults to `CLEAR_SYS_PAGE_CACHE_METHOD=ssh`, which
@@ -82,6 +83,13 @@ Our goal is to build `velodb.github.io/benchmarks` into the industry's most trus
      `CLEAR_CACHE_SSH_USER` (default `root`). For Yaochi clusters that expose cache
      clearing over HTTP, set `CLEAR_SYS_PAGE_CACHE_METHOD=http`; this calls
      `GET http://<be>:${CLEAR_SYS_PAGE_CACHE_HTTP_PORT:-8050}${CLEAR_SYS_PAGE_CACHE_HTTP_PATH:-/drop_sys_cache}`.
+   - `CLEAR_CACHE_SCOPE` controls timing:
+     `before_query` clears once after load/analyze and before the query phase;
+     `per_query` clears once before each query; `cold` clears before run 1 of
+     each query; `every_run` clears before every query run.
+   - `COLD_QUERY_COUNT` / `HOT_QUERY_COUNT` enable selectdb-qa style
+     cold/hot query execution. Each cold run clears enabled caches first; hot
+     runs do not clear cache, and the hot summary uses the minimum hot time.
     Results are saved in the `results` directory under the corresponding path.
 
 ### View Results
@@ -163,14 +171,20 @@ This document details how to conduct performance testing for different databases
 3. Disable all result-cache features on the system under test during testing to ensure the validity of performance data.
 4. Ensure that the same test set uses consistent SQL logic and table data across different systems under test for fair comparison.
 5. You can directly use the provided test sets. Lakehouse data may not be publicly readable, so you need to prepare test data in advance. There will be a dedicated section later on how to prepare Iceberg datasets.
-6. For VeloDB / Doris cloud runs you can clear BE caches before each query via three
+6. For VeloDB / Doris cloud runs you can clear BE caches via three
    independent switches: `CLEAR_FILE_CACHE`, `CLEAR_PAGE_CACHE`, `CLEAR_SYS_PAGE_CACHE`.
    All of them require `BE_HOSTS` (comma-separated). `CLEAR_CACHE_SCOPE` controls timing
-   (`cold` = only before run 1 of each query; `every_run` = before every run).
-   `CLEAR_FILE_CACHE` talks to each BE's HTTP API on `BE_HTTP_PORT` (default 8040) and
-   polls `BE_BRPC_PORT` (default 8060) until `file_cache_cache_size` falls below
-   `CLEAR_FILE_CACHE_MAX_SIZE_GB` (default 2) or `CLEAR_FILE_CACHE_TIMEOUT_MIN`
-   (default 60) elapses. `CLEAR_SYS_PAGE_CACHE` uses
+   (`before_query` = once before the query phase, matching selectdb-qa's default
+   clear behavior; `per_query` = once before each query, matching selectdb-qa's
+   `clearPerQuery`; `cold` = only before run 1 of each query; `every_run` =
+   before every run).
+   You can also set `COLD_QUERY_COUNT` and `HOT_QUERY_COUNT` to run the
+   selectdb-qa cold/hot model: every cold run clears enabled caches first, hot
+   runs do not clear cache, and the hot summary is the minimum hot run.
+   `CLEAR_FILE_CACHE` talks to each BE's HTTP API on `BE_HTTP_PORT` (default 8040)
+   using the benchmark `DB_USER` / `PASSWORD`, and polls `BE_BRPC_PORT` (default 8060)
+   until `file_cache_cache_size` falls below `CLEAR_FILE_CACHE_MAX_SIZE_GB`
+   (default 2) or `CLEAR_FILE_CACHE_TIMEOUT_MIN` (default 60) elapses.
    `CLEAR_SYS_PAGE_CACHE_METHOD=ssh` by default and SSHes to each BE as
    `CLEAR_CACHE_SSH_USER` (default `root`) to run `drop_caches`. Set
    `CLEAR_SYS_PAGE_CACHE_METHOD=http` for Yaochi-style clusters; it sends
@@ -379,7 +393,8 @@ The root object contains two main keys: `metadata` and `results`.
 
 | Key           | Type   | Description                                              |
 |---------------|--------|---------------------------------------------------------|
-| `query_times` | object | Each key is a query name, value is an array of execution times (seconds). E.g., `"q1": [0.067, 0.058, 0.05]`. |
+| `query_times` | object | Each key is a query name, value is a UI-compatible summary array. In custom cold/hot mode this is `[cold_1, hot_min]`; otherwise it contains all legacy `query_times` runs. |
+| `query_run_times` | object | Detailed custom cold/hot runs. Each key has `cold`, `hot`, and `hot_min` fields. Empty when custom cold/hot mode is not used. |
 
 #### `jmeter` Object
 
@@ -465,6 +480,9 @@ Each test result object contains the following fields:
          "query_times": {
             "q1": [0.067, 0.058, 0.05],
             "q2": [0.064, 0.043, 0.062]
+         },
+         "query_run_times": {
+            "q1": { "cold": [0.067], "hot": [0.058, 0.05], "hot_min": 0.05 }
          }
       },
       "jmeter": {

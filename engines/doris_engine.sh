@@ -41,8 +41,32 @@ parse_be_hosts() {
 should_clear_cache_for_run() {
     local run_index="$1"
     any_clear_cache_enabled || return 1
-    [[ "${clear_cache_scope:-cold}" == "every_run" ]] && return 0
-    [[ "$run_index" -eq 1 ]]
+    case "${clear_cache_scope:-cold}" in
+        every_run)
+            return 0
+            ;;
+        cold)
+            [[ "$run_index" -eq 1 ]]
+            return
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+should_clear_cache_before_query_phase() {
+    any_clear_cache_enabled || return 1
+    [[ "${clear_cache_scope:-cold}" == "before_query" ]]
+}
+
+should_clear_cache_before_query() {
+    any_clear_cache_enabled || return 1
+    [[ "${clear_cache_scope:-cold}" == "per_query" ]]
+}
+
+should_clear_cache_for_cold_query_run() {
+    any_clear_cache_enabled
 }
 
 # 1. Initialize and check Doris dependencies
@@ -445,13 +469,25 @@ _parse_file_cache_sizes() {
     awk '/file_cache_cache_size/ && !/gauge/ && !/HELP/ {print $NF}'
 }
 
-# Port of selectdb-qa ClearDorisFileCache:
-#   GET api/file_cache?op=clear&sync=false on each BE
-#   sleep 60, then every 30s poll brpc_metrics until every disk on every BE
-#   has file_cache_cache_size < max_size_gb * 1GB; re-trigger clear on BEs
-#   still above threshold. Timeout after timeout_min minutes.
-clear_doris_file_cache() {
+clear_doris_file_cache_on_be() {
+    local be="$1"
+    local label="${2:-clear}"
     local http_port="${be_http_port:-8040}"
+    local auth_user="${user:-root}"
+    local auth_password="${password:-}"
+
+    echo "[${be}] GET api/file_cache?op=clear&sync=true (${label})"
+    curl -fsS -u "${auth_user}:${auth_password}" -X GET \
+        "http://${be}:${http_port}/api/file_cache?op=clear&sync=true"
+}
+
+# Port of selectdb-qa ClearDorisFileCache:
+#   Clear Doris file cache using the benchmark DB credentials. Cloud clusters may
+#   reject unauthenticated cache-clear calls when the benchmark user is non-root.
+#   After the synchronous clear request returns, poll brpc_metrics until every disk
+#   on every BE has file_cache_cache_size < max_size_gb * 1GB; re-trigger clear on
+#   BEs still above threshold. Timeout after timeout_min minutes.
+clear_doris_file_cache() {
     local brpc_port="${be_brpc_port:-8060}"
     local max_gb="${clear_file_cache_max_size_gb:-2}"
     local timeout_min="${clear_file_cache_timeout_min:-60}"
@@ -459,15 +495,12 @@ clear_doris_file_cache() {
     max_bytes=$(awk -v g="$max_gb" 'BEGIN{printf "%.0f", g*1024*1024*1024}')
     local be
     for be in "${BE_HOSTS_ARR[@]}"; do
-        echo "[${be}] GET api/file_cache?op=clear&sync=false"
-        if ! curl -fsS "http://${be}:${http_port}/api/file_cache?op=clear&sync=false"; then
+        if ! clear_doris_file_cache_on_be "$be"; then
             echo "clear file_cache failed on ${be}" >&2
             return 1
         fi
         echo
     done
-    echo "wait 60s for async clear"
-    sleep 60
 
     local deadline
     deadline=$(( $(date +%s) + timeout_min * 60 ))
@@ -514,8 +547,7 @@ clear_doris_file_cache() {
         if [ "${#need_reclear[@]}" -gt 0 ]; then
             echo "re-clearing BEs still above threshold: ${need_reclear[*]}"
             for be in "${need_reclear[@]}"; do
-                echo "[${be}] GET api/file_cache?op=clear&sync=false (re-clear)"
-                curl -fsS "http://${be}:${http_port}/api/file_cache?op=clear&sync=false" || \
+                clear_doris_file_cache_on_be "$be" "re-clear" || \
                     echo "re-clear failed on ${be}" >&2
                 echo
             done
@@ -531,8 +563,14 @@ clear_doris_file_cache() {
 
 run_clear_cache_actions() {
     local query_name="$1"
-    local run_index="$2"
-    echo "Clearing cache before query ${query_name} run ${run_index}..."
+    local run_index="${2:-}"
+    if [[ "$run_index" =~ ^[0-9]+$ ]]; then
+        echo "Clearing cache before query ${query_name} run ${run_index}..."
+    elif [ -n "$run_index" ]; then
+        echo "Clearing cache before query ${query_name} ${run_index}..."
+    else
+        echo "Clearing cache before ${query_name}..."
+    fi
 
     if [[ "${clear_file_cache:-false}" == "true" ]]; then
         clear_doris_file_cache || return 1
