@@ -11,6 +11,7 @@ generate_result() {
     local result_json="$RESULT_DIR/result.json"
     local load_csv="$RESULT_DIR/load.csv"
     local query_csv="$RESULT_DIR/query.csv"
+    local query_detail_csv="$RESULT_DIR/query_detail.csv"
     local jmeter_config="$RESULT_DIR/jmeter_config.json"
     local statistics_json="$RESULT_DIR/html_report/statistics.json"
     local sysbench_metrics_json="$RESULT_DIR/sysbench_metrics.json"
@@ -74,6 +75,44 @@ generate_result() {
         query_times_json="{}"
     fi
 
+    local query_run_times_json
+    if [ -f "$query_detail_csv" ]; then
+        query_run_times_json=$(awk -F',' '
+            function append_number(list, value) {
+                if (value == "null" || value == "") {
+                    value = "null"
+                } else {
+                    value = sprintf("%.3f", value)
+                }
+                return list (list == "" ? "" : ",") value
+            }
+            NR == 1 {
+                for (i = 2; i <= NF; i++) {
+                    header[i] = $i
+                }
+                next
+            }
+            NR > 1 {
+                cold = ""
+                hot = ""
+                hot_min = "null"
+                for (i = 2; i <= NF; i++) {
+                    if (header[i] ~ /^cold_[0-9]+$/) {
+                        cold = append_number(cold, $i)
+                    } else if (header[i] ~ /^hot_[0-9]+$/) {
+                        hot = append_number(hot, $i)
+                    } else if (header[i] == "hot_min") {
+                        hot_min = ($i == "null" || $i == "") ? "null" : sprintf("%.3f", $i)
+                    }
+                }
+                printf "\"%s\":{\"cold\":[%s],\"hot\":[%s],\"hot_min\":%s},", $1, cold, hot, hot_min
+            }
+        ' "$query_detail_csv")
+        query_run_times_json="{${query_run_times_json%,}}"
+    else
+        query_run_times_json="{}"
+    fi
+
     # Process JMeter results
     # Read JMeter configuration and statistics
     local jmeter_config_content statistics_content
@@ -107,6 +146,7 @@ generate_result() {
       --argjson load_times "$load_times_json" \
       --argjson analyze_times "$analyze_times_json" \
       --argjson query_times "$query_times_json" \
+      --argjson query_run_times "$query_run_times_json" \
       --argjson jmeter_config "$jmeter_config_content" \
       --argjson stats "$statistics_content" \
       --argjson sorted_keys "$sorted_keys_json" \
@@ -136,7 +176,8 @@ generate_result() {
       } |
       # 4. Construct Query Times Results
       .results.query = {
-        query_times: $query_times
+        query_times: $query_times,
+        query_run_times: $query_run_times
       } |
       # 5. Construct JMeter Results
       .results.jmeter = {

@@ -146,6 +146,7 @@ append_data_entries() {
         load_times=$(jq -c '.results.load.load_times // {}' "$filepath")
         data_size_bytes=$(jq -r '.results.load.data_size_bytes // null' "$filepath")
         query_times=$(jq -c '.results.query.query_times // {}' "$filepath")
+        query_run_times=$(jq -c '.results.query.query_run_times // {}' "$filepath")
         jmeter_results=$(jq -c '.results.jmeter.test_results // []' "$filepath")
 
         if [ "$dataset" = "versions" ] && [ -n "$version" ] && [ "${hardware#"$version."}" != "$hardware" ]; then
@@ -178,6 +179,7 @@ append_data_entries() {
     "load_times": $load_times,
     "data_size_bytes": $data_size_bytes,
     "query_times": $query_times,
+    "query_run_times": $query_run_times,
     "jmeter_results": $jmeter_results
 }
 EOF

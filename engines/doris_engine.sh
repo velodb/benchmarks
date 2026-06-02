@@ -41,8 +41,32 @@ parse_be_hosts() {
 should_clear_cache_for_run() {
     local run_index="$1"
     any_clear_cache_enabled || return 1
-    [[ "${clear_cache_scope:-cold}" == "every_run" ]] && return 0
-    [[ "$run_index" -eq 1 ]]
+    case "${clear_cache_scope:-cold}" in
+        every_run)
+            return 0
+            ;;
+        cold)
+            [[ "$run_index" -eq 1 ]]
+            return
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+should_clear_cache_before_query_phase() {
+    any_clear_cache_enabled || return 1
+    [[ "${clear_cache_scope:-cold}" == "before_query" ]]
+}
+
+should_clear_cache_before_query() {
+    any_clear_cache_enabled || return 1
+    [[ "${clear_cache_scope:-cold}" == "per_query" ]]
+}
+
+should_clear_cache_for_cold_query_run() {
+    any_clear_cache_enabled
 }
 
 # 1. Initialize and check Doris dependencies
@@ -483,8 +507,14 @@ clear_doris_file_cache() {
 
 run_clear_cache_actions() {
     local query_name="$1"
-    local run_index="$2"
-    echo "Clearing cache before query ${query_name} run ${run_index}..."
+    local run_index="${2:-}"
+    if [[ "$run_index" =~ ^[0-9]+$ ]]; then
+        echo "Clearing cache before query ${query_name} run ${run_index}..."
+    elif [ -n "$run_index" ]; then
+        echo "Clearing cache before query ${query_name} ${run_index}..."
+    else
+        echo "Clearing cache before ${query_name}..."
+    fi
 
     if [[ "${clear_file_cache:-false}" == "true" ]]; then
         clear_doris_file_cache || return 1

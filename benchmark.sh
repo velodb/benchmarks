@@ -520,6 +520,49 @@ run_check_rows() {
     echo "scale=3; ($check_end - $check_start) / 1000" | bc > "$RESULT_DIR/check_rows_time.txt"
 }
 
+run_timed_query() {
+    local query_name="$1"
+    local safe_query_name="$2"
+    local run_label="$3"
+    local sql_content="$4"
+
+    RUN_QUERY_DURATION="9999"
+    echo "Query run ${query_name} on ${run_label}"
+
+    local start_time
+    start_time=$(date +%s%3N)
+    if engine_run_sql "${db}" "$sql_content"; then
+        local end_time
+        end_time=$(date +%s%3N)
+        RUN_QUERY_DURATION=$(echo "scale=3; ($end_time - $start_time) / 1000" | bc)
+        if [[ "$profile_supported" == "true" && "$profile_enabled" == "true" ]]; then
+            local query_id
+            query_id=$(engine_get_last_query_id 2>/dev/null || true)
+            if [ -n "$query_id" ]; then
+                profile_query_names+=("${safe_query_name}")
+                profile_query_runs+=("${run_label}")
+                profile_query_ids+=("${query_id}")
+            else
+                echo "Failed to get query id for ${query_name} ${run_label}" >&2
+            fi
+        fi
+    else
+        echo "Query execution failed ${query_name} on ${run_label}" >&2
+    fi
+}
+
+min_query_duration() {
+    local min="$1"
+    shift || true
+    local value
+    for value in "$@"; do
+        if awk -v a="$value" -v b="$min" 'BEGIN{exit !(a < b)}'; then
+            min="$value"
+        fi
+    done
+    printf '%s' "$min"
+}
+
 # Run benchmark queries
 run_query() {
     local query_dir="${QUERY_DIR:-query/}"
@@ -604,6 +647,7 @@ run_query() {
     echo "Running queries..."
     # Initialize query results CSV
     local query_csv="$RESULT_DIR/query.csv"
+    local query_detail_csv="$RESULT_DIR/query_detail.csv"
     local plan_dir=""
     local profile_dir=""
     if [[ "$plan" == "true" ]]; then
@@ -620,12 +664,37 @@ run_query() {
     local profile_query_runs=()
     local profile_query_ids=()
     
-    # Write header to query.csv
+    local use_custom_query_counts="false"
+    if (( cold_query_count > 0 || hot_query_count > 0 )); then
+        use_custom_query_counts="true"
+    fi
+
+    # Write header to query.csv. In custom cold/hot mode query.csv keeps a
+    # UI-compatible summary; query_detail.csv keeps every measured run.
     header="query_name,cold_1"
-    for ((i=1; i<=query_times-1; i++)); do
-        header+=",hot_$i"
-    done
-    echo "$header" > "$query_csv"
+    if [[ "$use_custom_query_counts" == "true" ]]; then
+        if (( hot_query_count > 0 )); then
+            header+=",hot_min"
+        fi
+        echo "$header" > "$query_csv"
+
+        local detail_header="query_name"
+        for ((i=1; i<=cold_query_count; i++)); do
+            detail_header+=",cold_$i"
+        done
+        for ((i=1; i<=hot_query_count; i++)); do
+            detail_header+=",hot_$i"
+        done
+        if (( hot_query_count > 0 )); then
+            detail_header+=",hot_min"
+        fi
+        echo "$detail_header" > "$query_detail_csv"
+    else
+        for ((i=1; i<=query_times-1; i++)); do
+            header+=",hot_$i"
+        done
+        echo "$header" > "$query_csv"
+    fi
     for((i=0; i<${#all_query_names[@]}; i++)); do
         local query_name="${all_query_names[i]}"
         local sql_content="${all_query_sqls[i]}"
@@ -645,38 +714,63 @@ run_query() {
             fi
         fi
 
-        for ((t=1; t<=query_times; t++)); do
-            echo "Query run ${query_name} on run $t"
-            if type -t should_clear_cache_for_run >/dev/null && should_clear_cache_for_run "$t"; then
-                if ! run_clear_cache_actions "$query_name" "$t"; then
-                    die "Failed to clear cache before query ${query_name} run ${t}"
-                fi
+        if [[ "$use_custom_query_counts" != "true" ]] && type -t should_clear_cache_before_query >/dev/null && should_clear_cache_before_query "$query_name"; then
+            if ! run_clear_cache_actions "$query_name"; then
+                die "Failed to clear cache before query ${query_name}"
             fi
-            local start_time
-            start_time=$(date +%s%3N)
-            if engine_run_sql "${db}" "$sql_content"; then
-                local end_time
-                end_time=$(date +%s%3N)
-                local duration
-                duration=$(echo "scale=3; ($end_time - $start_time) / 1000" | bc)
-                times_result+=",$duration"
-                if [[ "$profile_supported" == "true" && "$profile_enabled" == "true" ]]; then
-                    local query_id
-                    query_id=$(engine_get_last_query_id 2>/dev/null || true)
-                    if [ -n "$query_id" ]; then
-                        profile_query_names+=("${safe_query_name}")
-                        profile_query_runs+=("${t}")
-                        profile_query_ids+=("${query_id}")
-                    else
-                        echo "Failed to get query id for ${query_name} run $t" >&2
+        fi
+
+        if [[ "$use_custom_query_counts" == "true" ]]; then
+            local cold_values=()
+            local hot_values=()
+            local detail_result="${query_name}"
+
+            for ((t=1; t<=cold_query_count; t++)); do
+                if type -t should_clear_cache_for_cold_query_run >/dev/null && should_clear_cache_for_cold_query_run "$query_name" "$t"; then
+                    if ! run_clear_cache_actions "$query_name" "cold_$t"; then
+                        die "Failed to clear cache before query ${query_name} cold run ${t}"
                     fi
                 fi
-            else
-                times_result+=",9999"
-                echo "Query execution failed ${query_name} on run $t" >&2
+                run_timed_query "$query_name" "$safe_query_name" "cold_$t" "$sql_content"
+                cold_values+=("$RUN_QUERY_DURATION")
+                detail_result+=",$RUN_QUERY_DURATION"
+            done
+
+            for ((t=1; t<=hot_query_count; t++)); do
+                run_timed_query "$query_name" "$safe_query_name" "hot_$t" "$sql_content"
+                hot_values+=("$RUN_QUERY_DURATION")
+                detail_result+=",$RUN_QUERY_DURATION"
+            done
+
+            local hot_min="null"
+            if (( hot_query_count > 0 )); then
+                hot_min=$(min_query_duration "${hot_values[@]}")
+                detail_result+=",$hot_min"
             fi
-        done
-        echo "$times_result" >> "$query_csv"
+
+            if (( cold_query_count > 0 )); then
+                times_result+=",${cold_values[0]}"
+            else
+                times_result+=",null"
+            fi
+            if (( hot_query_count > 0 )); then
+                times_result+=",$hot_min"
+            fi
+
+            echo "$times_result" >> "$query_csv"
+            echo "$detail_result" >> "$query_detail_csv"
+        else
+            for ((t=1; t<=query_times; t++)); do
+                if type -t should_clear_cache_for_run >/dev/null && should_clear_cache_for_run "$t"; then
+                    if ! run_clear_cache_actions "$query_name" "$t"; then
+                        die "Failed to clear cache before query ${query_name} run ${t}"
+                    fi
+                fi
+                run_timed_query "$query_name" "$safe_query_name" "$t" "$sql_content"
+                times_result+=",$RUN_QUERY_DURATION"
+            done
+            echo "$times_result" >> "$query_csv"
+        fi
     done
     
     # Process batch profile fetching
@@ -1000,6 +1094,8 @@ main() {
     analyze_type="${analyze_type:-${ANALYZE_TYPE:-analyze_full}}"
     query="${query:-false}"
     query_times="${query_times:-1}"
+    cold_query_count="${cold_query_count:-${COLD_QUERY_COUNT:-0}}"
+    hot_query_count="${hot_query_count:-${HOT_QUERY_COUNT:-0}}"
     db="${db:-}"
     drop_database="${drop_database:-${DROP_DATABASE:-false}}"
     clean_trash="${clean_trash:-${CLEAN_TRASH:-false}}"
@@ -1028,6 +1124,12 @@ main() {
     if [[ "${plan,,}" != "true" ]]; then
         plan="false"
     fi
+    if ! [[ "$cold_query_count" =~ ^[0-9]+$ ]]; then
+        die "Invalid cold_query_count: ${cold_query_count}"
+    fi
+    if ! [[ "$hot_query_count" =~ ^[0-9]+$ ]]; then
+        die "Invalid hot_query_count: ${hot_query_count}"
+    fi
 
     clear_cache_scope="${clear_cache_scope,,}"
     [[ "${clear_file_cache,,}" != "true" ]] && clear_file_cache="false"
@@ -1037,9 +1139,16 @@ main() {
     if [[ "${clear_file_cache:-false}" == "true" \
         || "${clear_page_cache:-false}" == "true" \
         || "${clear_sys_page_cache:-false}" == "true" ]]; then
-        if [[ "$clear_cache_scope" != "cold" && "$clear_cache_scope" != "every_run" ]]; then
-            die "Invalid clear_cache_scope: ${clear_cache_scope} (allowed: cold, every_run)"
-        fi
+        case "$clear_cache_scope" in
+            before_query_phase|query_phase|once)
+                clear_cache_scope="before_query"
+                ;;
+            before_query|per_query|cold|every_run)
+                ;;
+            *)
+                die "Invalid clear_cache_scope: ${clear_cache_scope} (allowed: before_query, per_query, cold, every_run)"
+                ;;
+        esac
         if [ -z "${be_hosts:-}" ]; then
             die "clear_*_cache is enabled but be_hosts is empty (set BE_HOSTS=ip1,ip2,...)"
         fi
@@ -1064,7 +1173,11 @@ main() {
     if [[ "${clear_file_cache:-false}" == "true" \
         || "${clear_page_cache:-false}" == "true" \
         || "${clear_sys_page_cache:-false}" == "true" ]]; then
-        if ! type -t should_clear_cache_for_run >/dev/null || ! type -t run_clear_cache_actions >/dev/null; then
+        if ! type -t should_clear_cache_before_query_phase >/dev/null \
+            || ! type -t should_clear_cache_before_query >/dev/null \
+            || ! type -t should_clear_cache_for_run >/dev/null \
+            || ! type -t should_clear_cache_for_cold_query_run >/dev/null \
+            || ! type -t run_clear_cache_actions >/dev/null; then
             die "Cache clearing is not supported by engine: ${ENGINE_TYPE}"
         fi
     fi
@@ -1097,6 +1210,11 @@ main() {
     if [[ "$query" != "true" ]]; then
         echo "Query execution disabled, skipping"
     else
+        if type -t should_clear_cache_before_query_phase >/dev/null && should_clear_cache_before_query_phase; then
+            if ! run_clear_cache_actions "query phase"; then
+                die "Failed to clear cache before query phase"
+            fi
+        fi
         run_query
     fi
     if [[ "$jmeter" != "true" ]]; then
