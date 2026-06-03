@@ -62,7 +62,9 @@ Our goal is to build `velodb.github.io/benchmarks` into the industry's most trus
     LOAD=false JMETER_THREADS=100 bash benchmark.sh --config ...
     ```
    For cloud scenarios on VeloDB / Doris, enable BE-side cache clearing.
-   `BE_HOSTS` is required; each flag is independent and can be combined:
+   `BE_HOSTS` can be provided explicitly; when omitted, Doris tries to discover
+   BE / Compute hosts from the FE via `SHOW BACKENDS` and `SHOW COMPUTE NODES`.
+   Each flag is independent and can be combined:
    ```bash
    BE_HOSTS=10.0.0.11,10.0.0.12 \
    CLEAR_FILE_CACHE=true \
@@ -173,7 +175,8 @@ This document details how to conduct performance testing for different databases
 5. You can directly use the provided test sets. Lakehouse data may not be publicly readable, so you need to prepare test data in advance. There will be a dedicated section later on how to prepare Iceberg datasets.
 6. For VeloDB / Doris cloud runs you can clear BE caches via three
    independent switches: `CLEAR_FILE_CACHE`, `CLEAR_PAGE_CACHE`, `CLEAR_SYS_PAGE_CACHE`.
-   All of them require `BE_HOSTS` (comma-separated). `CLEAR_CACHE_SCOPE` controls timing
+   `BE_HOSTS` can be provided explicitly as a comma-separated list; when it is
+   empty, Doris tries to discover BE / Compute hosts from the FE. `CLEAR_CACHE_SCOPE` controls timing
    (`before_query` = once before the query phase, matching selectdb-qa's default
    clear behavior; `per_query` = once before each query, matching selectdb-qa's
    `clearPerQuery`; `cold` = only before run 1 of each query; `every_run` =

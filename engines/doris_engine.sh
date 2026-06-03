@@ -38,6 +38,33 @@ parse_be_hosts() {
     done
 }
 
+discover_be_hosts_from_fe() {
+    local query output host discovered_hosts=""
+    export MYSQL_PWD="${password:-}"
+
+    for query in "SHOW BACKENDS;" "SHOW COMPUTE NODES;"; do
+        if ! output=$(mysql -h"$fe_host" -P"$fe_query_port" -u"$user" -N -s -e "$query" 2>/dev/null); then
+            continue
+        fi
+
+        while IFS= read -r host; do
+            [ -z "$host" ] && continue
+            if [[ ",${discovered_hosts}," != *",${host},"* ]]; then
+                if [ -z "$discovered_hosts" ]; then
+                    discovered_hosts="$host"
+                else
+                    discovered_hosts="${discovered_hosts},${host}"
+                fi
+            fi
+        done < <(printf '%s\n' "$output" | awk -F'\t' 'NF >= 2 && $2 != "" {print $2}')
+    done
+
+    [ -z "$discovered_hosts" ] && return 1
+    be_hosts="$discovered_hosts"
+    echo "auto-discovered cache-clear BE hosts from FE: ${be_hosts}"
+    return 0
+}
+
 should_clear_cache_for_run() {
     local run_index="$1"
     any_clear_cache_enabled || return 1
@@ -149,7 +176,15 @@ engine_init() {
     if any_clear_cache_enabled; then
         parse_be_hosts
         if [ "${#BE_HOSTS_ARR[@]}" -eq 0 ]; then
-            echo "ERROR: be_hosts parsed to empty list: ${be_hosts}" >&2
+            echo "be_hosts is empty; discovering BE hosts from Doris FE..."
+            if ! discover_be_hosts_from_fe; then
+                echo "ERROR: failed to discover BE hosts from FE. Set BE_HOSTS=ip1,ip2,... for cache clearing." >&2
+                return 1
+            fi
+            parse_be_hosts
+        fi
+        if [ "${#BE_HOSTS_ARR[@]}" -eq 0 ]; then
+            echo "ERROR: be_hosts parsed to empty list after discovery: ${be_hosts}" >&2
             return 1
         fi
         echo "cache-clear BEs: ${BE_HOSTS_ARR[*]}"

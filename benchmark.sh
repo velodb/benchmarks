@@ -1153,9 +1153,9 @@ main() {
                 die "Invalid clear_cache_scope: ${clear_cache_scope} (allowed: before_query, per_query, cold, every_run)"
                 ;;
         esac
-        if [ -z "${be_hosts:-}" ]; then
-            die "clear_*_cache is enabled but be_hosts is empty (set BE_HOSTS=ip1,ip2,...)"
-        fi
+        # Some engines can discover BE hosts from the FE when BE_HOSTS is empty.
+        # Engine initialization is responsible for failing if discovery is not
+        # supported or returns no hosts.
         if ! [[ "$be_http_port" =~ ^[0-9]+$ ]]; then
             die "Invalid be_http_port: ${be_http_port}"
         fi
