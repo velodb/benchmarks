@@ -524,11 +524,11 @@ clear_doris_file_cache_on_be() {
 #   Clear Doris file cache using the benchmark DB credentials. Cloud clusters may
 #   reject unauthenticated cache-clear calls when the benchmark user is non-root.
 #   After the synchronous clear request returns, poll brpc_metrics until every disk
-#   on every BE has file_cache_cache_size < max_size_gb * 1GB; re-trigger clear on
+#   on every BE has file_cache_cache_size <= max_size_gb * 1GB; re-trigger clear on
 #   BEs still above threshold. Timeout after timeout_min minutes.
 clear_doris_file_cache() {
     local brpc_port="${be_brpc_port:-8060}"
-    local max_gb="${clear_file_cache_max_size_gb:-2}"
+    local max_gb="${clear_file_cache_max_size_gb:-0}"
     local timeout_min="${clear_file_cache_timeout_min:-60}"
     local max_bytes
     max_bytes=$(awk -v g="$max_gb" 'BEGIN{printf "%.0f", g*1024*1024*1024}')
@@ -568,7 +568,7 @@ clear_doris_file_cache() {
                 local gb
                 gb=$(awk -v s="$size" 'BEGIN{printf "%.2f", s/1024/1024/1024}')
                 echo "[${be}] disk ${idx} cache size: ${gb} GB"
-                if awk -v s="$size" -v m="$max_bytes" 'BEGIN{exit !(s>=m)}'; then
+                if awk -v s="$size" -v m="$max_bytes" 'BEGIN{exit !(s>m)}'; then
                     node_below="false"
                 fi
             done <<< "$sizes"
@@ -579,7 +579,7 @@ clear_doris_file_cache() {
         done
 
         if [[ "$all_below" == "true" ]]; then
-            echo "all disks on all BEs below ${max_gb}GB"
+            echo "all disks on all BEs at ${max_gb}GB or less"
             return 0
         fi
 
@@ -593,7 +593,7 @@ clear_doris_file_cache() {
         fi
 
         if [ "$(date +%s)" -ge "$deadline" ]; then
-            echo "timeout waiting for file cache to drop below ${max_gb}GB" >&2
+            echo "timeout waiting for file cache to drop to ${max_gb}GB or less" >&2
             return 1
         fi
         sleep 30

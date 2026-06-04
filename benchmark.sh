@@ -1108,7 +1108,7 @@ main() {
     be_hosts="${be_hosts:-${BE_HOSTS:-}}"
     be_http_port="${be_http_port:-${BE_HTTP_PORT:-8040}}"
     be_brpc_port="${be_brpc_port:-${BE_BRPC_PORT:-8060}}"
-    clear_file_cache_max_size_gb="${clear_file_cache_max_size_gb:-${CLEAR_FILE_CACHE_MAX_SIZE_GB:-2}}"
+    clear_file_cache_max_size_gb="${clear_file_cache_max_size_gb:-${CLEAR_FILE_CACHE_MAX_SIZE_GB:-0}}"
     clear_file_cache_timeout_min="${clear_file_cache_timeout_min:-${CLEAR_FILE_CACHE_TIMEOUT_MIN:-60}}"
     clear_sys_page_cache_method="${clear_sys_page_cache_method:-${CLEAR_SYS_PAGE_CACHE_METHOD:-ssh}}"
     clear_sys_page_cache_http_port="${clear_sys_page_cache_http_port:-${CLEAR_SYS_PAGE_CACHE_HTTP_PORT:-8050}}"

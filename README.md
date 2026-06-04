@@ -76,8 +76,8 @@ Our goal is to build `velodb.github.io/benchmarks` into the industry's most trus
    - `CLEAR_FILE_CACHE` — authenticated
      `GET /api/file_cache?op=clear&sync=true` on each BE using the benchmark
      `DB_USER` / `PASSWORD`, then poll `brpc_metrics` until every disk's
-     `file_cache_cache_size` drops below `CLEAR_FILE_CACHE_MAX_SIZE_GB`
-     (default 2 GB), timeout `CLEAR_FILE_CACHE_TIMEOUT_MIN` minutes (default 60).
+     `file_cache_cache_size` drops to `CLEAR_FILE_CACHE_MAX_SIZE_GB` or less
+     (default 0 GB), timeout `CLEAR_FILE_CACHE_TIMEOUT_MIN` minutes (default 60).
    - `CLEAR_PAGE_CACHE` — toggles `disable_storage_page_cache` on→off via
      `/api/update_config` with 10 s dwell each.
    - `CLEAR_SYS_PAGE_CACHE` — defaults to `CLEAR_SYS_PAGE_CACHE_METHOD=ssh`, which
@@ -186,8 +186,8 @@ This document details how to conduct performance testing for different databases
    runs do not clear cache, and the hot summary is the minimum hot run.
    `CLEAR_FILE_CACHE` talks to each BE's HTTP API on `BE_HTTP_PORT` (default 8040)
    using the benchmark `DB_USER` / `PASSWORD`, and polls `BE_BRPC_PORT` (default 8060)
-   until `file_cache_cache_size` falls below `CLEAR_FILE_CACHE_MAX_SIZE_GB`
-   (default 2) or `CLEAR_FILE_CACHE_TIMEOUT_MIN` (default 60) elapses.
+   until `file_cache_cache_size` falls to `CLEAR_FILE_CACHE_MAX_SIZE_GB` or less
+   (default 0) or `CLEAR_FILE_CACHE_TIMEOUT_MIN` (default 60) elapses.
    `CLEAR_SYS_PAGE_CACHE_METHOD=ssh` by default and SSHes to each BE as
    `CLEAR_CACHE_SSH_USER` (default `root`) to run `drop_caches`. Set
    `CLEAR_SYS_PAGE_CACHE_METHOD=http` for Yaochi-style clusters; it sends
