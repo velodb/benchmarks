@@ -423,6 +423,8 @@ clear_system_page_cache_by_ssh() {
 clear_system_page_cache_by_http() {
     local port="${clear_sys_page_cache_http_port:-8050}"
     local path="${clear_sys_page_cache_http_path:-/drop_sys_cache}"
+    local auth_user="${user:-root}"
+    local auth_password="${password:-}"
     local be
 
     if [[ "$path" != /* ]]; then
@@ -431,7 +433,7 @@ clear_system_page_cache_by_http() {
 
     for be in "${BE_HOSTS_ARR[@]}"; do
         echo "[${be}] GET ${path}"
-        if ! curl -fsS "http://${be}:${port}${path}"; then
+        if ! curl -fsS -u "${auth_user}:${auth_password}" "http://${be}:${port}${path}"; then
             echo "drop_sys_cache failed on ${be}" >&2
             return 1
         fi
@@ -469,16 +471,18 @@ clear_system_page_cache() {
 #   POST api/update_config?disable_storage_page_cache=false  (wait 10s)
 clear_doris_page_cache() {
     local port="${be_http_port:-8040}"
+    local auth_user="${user:-root}"
+    local auth_password="${password:-}"
     local be
     for be in "${BE_HOSTS_ARR[@]}"; do
         echo "[${be}] POST cache_periodic_prune_stale_sweep_sec=5"
-        if ! curl -fsS -X POST "http://${be}:${port}/api/update_config?cache_periodic_prune_stale_sweep_sec=5"; then
+        if ! curl -fsS -u "${auth_user}:${auth_password}" -X POST "http://${be}:${port}/api/update_config?cache_periodic_prune_stale_sweep_sec=5"; then
             echo "update_config prune_sweep_sec failed on ${be}" >&2
             return 1
         fi
         echo
         echo "[${be}] POST disable_storage_page_cache=true"
-        if ! curl -fsS -X POST "http://${be}:${port}/api/update_config?disable_storage_page_cache=true"; then
+        if ! curl -fsS -u "${auth_user}:${auth_password}" -X POST "http://${be}:${port}/api/update_config?disable_storage_page_cache=true"; then
             echo "update_config disable=true failed on ${be}" >&2
             return 1
         fi
@@ -488,7 +492,7 @@ clear_doris_page_cache() {
     sleep 10
     for be in "${BE_HOSTS_ARR[@]}"; do
         echo "[${be}] POST disable_storage_page_cache=false"
-        if ! curl -fsS -X POST "http://${be}:${port}/api/update_config?disable_storage_page_cache=false"; then
+        if ! curl -fsS -u "${auth_user}:${auth_password}" -X POST "http://${be}:${port}/api/update_config?disable_storage_page_cache=false"; then
             echo "update_config disable=false failed on ${be}" >&2
             return 1
         fi
