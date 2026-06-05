@@ -1102,7 +1102,7 @@ main() {
     profile="${profile:-${PROFILE:-false}}"
     plan="${plan:-${PLAN:-false}}"
     clear_file_cache="${clear_file_cache:-${CLEAR_FILE_CACHE:-false}}"
-    clear_page_cache="${clear_page_cache:-${CLEAR_PAGE_CACHE:-false}}"
+    disable_doris_page_cache="${disable_doris_page_cache:-${DISABLE_DORIS_PAGE_CACHE:-false}}"
     clear_sys_page_cache="${clear_sys_page_cache:-${CLEAR_SYS_PAGE_CACHE:-false}}"
     clear_cache_scope="${clear_cache_scope:-${CLEAR_CACHE_SCOPE:-cold}}"
     be_hosts="${be_hosts:-${BE_HOSTS:-}}"
@@ -1136,12 +1136,27 @@ main() {
 
     clear_cache_scope="${clear_cache_scope,,}"
     clear_sys_page_cache_method="${clear_sys_page_cache_method,,}"
-    [[ "${clear_file_cache,,}" != "true" ]] && clear_file_cache="false"
-    [[ "${clear_page_cache,,}" != "true" ]] && clear_page_cache="false"
-    [[ "${clear_sys_page_cache,,}" != "true" ]] && clear_sys_page_cache="false"
+    if [[ "${clear_file_cache,,}" == "true" ]]; then
+        clear_file_cache="true"
+    else
+        clear_file_cache="false"
+    fi
+    if [[ "${disable_doris_page_cache,,}" == "true" ]]; then
+        disable_doris_page_cache="true"
+    else
+        disable_doris_page_cache="false"
+    fi
+    if [[ "${clear_sys_page_cache,,}" == "true" ]]; then
+        clear_sys_page_cache="true"
+    else
+        clear_sys_page_cache="false"
+    fi
+
+    if ! [[ "$be_http_port" =~ ^[0-9]+$ ]]; then
+        die "Invalid be_http_port: ${be_http_port}"
+    fi
 
     if [[ "${clear_file_cache:-false}" == "true" \
-        || "${clear_page_cache:-false}" == "true" \
         || "${clear_sys_page_cache:-false}" == "true" ]]; then
         case "$clear_cache_scope" in
             before_query_phase|query_phase|once)
@@ -1156,9 +1171,6 @@ main() {
         # Some engines can discover BE hosts from the FE when BE_HOSTS is empty.
         # Engine initialization is responsible for failing if discovery is not
         # supported or returns no hosts.
-        if ! [[ "$be_http_port" =~ ^[0-9]+$ ]]; then
-            die "Invalid be_http_port: ${be_http_port}"
-        fi
         if ! [[ "$be_brpc_port" =~ ^[0-9]+$ ]]; then
             die "Invalid be_brpc_port: ${be_brpc_port}"
         fi
@@ -1183,7 +1195,6 @@ main() {
     init_engine
 
     if [[ "${clear_file_cache:-false}" == "true" \
-        || "${clear_page_cache:-false}" == "true" \
         || "${clear_sys_page_cache:-false}" == "true" ]]; then
         if ! type -t should_clear_cache_before_query_phase >/dev/null \
             || ! type -t should_clear_cache_before_query >/dev/null \

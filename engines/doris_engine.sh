@@ -23,8 +23,12 @@ BE_HOSTS_ARR=()
 
 any_clear_cache_enabled() {
     [[ "${clear_file_cache:-false}" == "true" \
-    || "${clear_page_cache:-false}" == "true" \
     || "${clear_sys_page_cache:-false}" == "true" ]]
+}
+
+should_configure_doris_page_cache() {
+    [[ "${disable_doris_page_cache:-false}" == "true" \
+    || "${disable_doris_page_cache:-false}" == "false" ]]
 }
 
 parse_be_hosts() {
@@ -61,7 +65,7 @@ discover_be_hosts_from_fe() {
 
     [ -z "$discovered_hosts" ] && return 1
     be_hosts="$discovered_hosts"
-    echo "auto-discovered cache-clear BE hosts from FE: ${be_hosts}"
+    echo "auto-discovered Doris BE hosts from FE: ${be_hosts}"
     return 0
 }
 
@@ -134,9 +138,9 @@ engine_init() {
     local sys_cache_method="${clear_sys_page_cache_method:-ssh}"
     sys_cache_method="${sys_cache_method,,}"
 
-    if [[ "${clear_file_cache:-false}" == "true" \
-        || "${clear_page_cache:-false}" == "true" \
-        || ( "${clear_sys_page_cache:-false}" == "true" && "$sys_cache_method" == "http" ) ]]; then
+    if [[ "${clear_file_cache:-false}" == "true" ]] \
+        || should_configure_doris_page_cache \
+        || [[ "${clear_sys_page_cache:-false}" == "true" && "$sys_cache_method" == "http" ]]; then
         if ! command -v curl >/dev/null 2>&1; then
             missing_deps+=("curl")
         fi
@@ -173,12 +177,12 @@ engine_init() {
         return 1
     fi
     
-    if any_clear_cache_enabled; then
+    if any_clear_cache_enabled || should_configure_doris_page_cache; then
         parse_be_hosts
         if [ "${#BE_HOSTS_ARR[@]}" -eq 0 ]; then
-            echo "be_hosts is empty; discovering BE hosts from Doris FE..."
+            echo "be_hosts is empty; discovering Doris BE hosts from FE..."
             if ! discover_be_hosts_from_fe; then
-                echo "ERROR: failed to discover BE hosts from FE. Set BE_HOSTS=ip1,ip2,... for cache clearing." >&2
+                echo "ERROR: failed to discover BE hosts from FE. Set BE_HOSTS=ip1,ip2,... for BE HTTP operations." >&2
                 return 1
             fi
             parse_be_hosts
@@ -187,7 +191,11 @@ engine_init() {
             echo "ERROR: be_hosts parsed to empty list after discovery: ${be_hosts}" >&2
             return 1
         fi
-        echo "cache-clear BEs: ${BE_HOSTS_ARR[*]}"
+        echo "Doris BE hosts: ${BE_HOSTS_ARR[*]}"
+    fi
+
+    if should_configure_doris_page_cache; then
+        configure_doris_page_cache || return 1
     fi
 
     echo "Initialized ${ENGINE_TYPE:-Doris}: $fe_host:$fe_query_port/$db"
@@ -465,41 +473,80 @@ clear_system_page_cache() {
     esac
 }
 
-# Port of selectdb-qa ClearDorisPageCache:
-#   POST api/update_config?cache_periodic_prune_stale_sweep_sec=5
-#   POST api/update_config?disable_storage_page_cache=true   (wait 10s)
-#   POST api/update_config?disable_storage_page_cache=false  (wait 10s)
-clear_doris_page_cache() {
+parse_disable_storage_page_cache_config() {
+    local config="$1"
+    local parsed=""
+
+    if command -v jq >/dev/null 2>&1; then
+        parsed=$(printf '%s' "$config" | jq -r '
+            .. | arrays
+            | select(length >= 4 and .[0] == "disable_storage_page_cache")
+            | "\((.[2] | tostring))\t\((.[3] | tostring))"
+        ' 2>/dev/null | head -n 1 || true)
+    fi
+
+    if [ -z "$parsed" ]; then
+        parsed=$(printf '%s' "$config" \
+            | tr '\n' ' ' \
+            | grep -oE '\[[^][]*"disable_storage_page_cache"[^][]*\]' \
+            | head -n 1 \
+            | awk -F'"' '{print $6 "\t" $8}' || true)
+    fi
+
+    printf '%s\n' "$parsed"
+}
+
+configure_doris_page_cache() {
     local port="${be_http_port:-8040}"
     local auth_user="${user:-root}"
     local auth_password="${password:-}"
+    local desired="${disable_doris_page_cache:-false}"
     local be
+
+    desired="${desired,,}"
+    if [[ "$desired" != "true" ]]; then
+        desired="false"
+    fi
+
     for be in "${BE_HOSTS_ARR[@]}"; do
-        echo "[${be}] POST cache_periodic_prune_stale_sweep_sec=5"
-        if ! curl -fsS -u "${auth_user}:${auth_password}" -X POST "http://${be}:${port}/api/update_config?cache_periodic_prune_stale_sweep_sec=5"; then
-            echo "update_config prune_sweep_sec failed on ${be}" >&2
+        local config parsed current mutable
+        echo "[${be}] GET api/show_config disable_storage_page_cache"
+        if ! config=$(curl -fsS -u "${auth_user}:${auth_password}" "http://${be}:${port}/api/show_config"); then
+            echo "show_config failed on ${be}" >&2
             return 1
         fi
-        echo
-        echo "[${be}] POST disable_storage_page_cache=true"
-        if ! curl -fsS -u "${auth_user}:${auth_password}" -X POST "http://${be}:${port}/api/update_config?disable_storage_page_cache=true"; then
-            echo "update_config disable=true failed on ${be}" >&2
+
+        parsed=$(parse_disable_storage_page_cache_config "$config")
+        if [ -z "$parsed" ]; then
+            echo "disable_storage_page_cache not found in show_config on ${be}" >&2
+            return 1
+        fi
+
+        IFS=$'\t' read -r current mutable <<< "$parsed"
+        current="${current,,}"
+        mutable="${mutable,,}"
+        if [[ "$current" != "true" && "$current" != "false" ]]; then
+            echo "invalid disable_storage_page_cache value on ${be}: ${current}" >&2
+            return 1
+        fi
+
+        echo "[${be}] disable_storage_page_cache current=${current}, desired=${desired}, mutable=${mutable}"
+        if [[ "$current" == "$desired" ]]; then
+            continue
+        fi
+
+        if [[ "$mutable" != "true" ]]; then
+            echo "disable_storage_page_cache is not dynamically mutable on ${be}" >&2
+            return 1
+        fi
+
+        echo "[${be}] POST disable_storage_page_cache=${desired}"
+        if ! curl -fsS -u "${auth_user}:${auth_password}" -X POST "http://${be}:${port}/api/update_config?disable_storage_page_cache=${desired}"; then
+            echo "update_config disable_storage_page_cache=${desired} failed on ${be}" >&2
             return 1
         fi
         echo
     done
-    echo "wait 10s"
-    sleep 10
-    for be in "${BE_HOSTS_ARR[@]}"; do
-        echo "[${be}] POST disable_storage_page_cache=false"
-        if ! curl -fsS -u "${auth_user}:${auth_password}" -X POST "http://${be}:${port}/api/update_config?disable_storage_page_cache=false"; then
-            echo "update_config disable=false failed on ${be}" >&2
-            return 1
-        fi
-        echo
-    done
-    echo "wait 10s"
-    sleep 10
     return 0
 }
 
@@ -613,9 +660,6 @@ run_clear_cache_actions() {
 
     if [[ "${clear_file_cache:-false}" == "true" ]]; then
         clear_doris_file_cache || return 1
-    fi
-    if [[ "${clear_page_cache:-false}" == "true" ]]; then
-        clear_doris_page_cache || return 1
     fi
     if [[ "${clear_sys_page_cache:-false}" == "true" ]]; then
         clear_system_page_cache || return 1
