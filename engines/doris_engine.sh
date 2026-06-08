@@ -433,6 +433,7 @@ clear_system_page_cache_by_http() {
     local path="${clear_sys_page_cache_http_path:-/drop_sys_cache}"
     local auth_user="${user:-root}"
     local auth_password="${password:-}"
+    local max_retries=3
     local be
 
     if [[ "$path" != /* ]]; then
@@ -440,12 +441,29 @@ clear_system_page_cache_by_http() {
     fi
 
     for be in "${BE_HOSTS_ARR[@]}"; do
-        echo "[${be}] GET ${path}"
-        if ! curl -fsS -u "${auth_user}:${auth_password}" "http://${be}:${port}${path}"; then
-            echo "drop_sys_cache failed on ${be}" >&2
-            return 1
-        fi
-        echo
+        local attempt=0
+        local response=""
+        while true; do
+            echo "[${be}] GET ${path}"
+            if ! response=$(curl -fsS -u "${auth_user}:${auth_password}" "http://${be}:${port}${path}"); then
+                echo "drop_sys_cache failed on ${be}" >&2
+                return 1
+            fi
+            printf '%s\n' "$response"
+
+            if ! printf '%s' "$response" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"error"' \
+                || ! printf '%s' "$response" | grep -Eq '"message"[[:space:]]*:[[:space:]]*"timed out"'; then
+                break
+            fi
+
+            if [ "$attempt" -ge "$max_retries" ]; then
+                echo "drop_sys_cache timed out after ${max_retries} retries on ${be}" >&2
+                return 1
+            fi
+
+            attempt=$((attempt + 1))
+            echo "drop_sys_cache timed out on ${be}; retrying (${attempt}/${max_retries})..." >&2
+        done
     done
     sleep 3
     return 0
