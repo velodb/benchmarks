@@ -303,7 +303,7 @@ run_ddl() {
     create_temp_sql_file "ddl"
     tmp_sql="$LAST_TEMP_FILE"
     envsubst < "$ddl_file" > "$tmp_sql"
-    if ! engine_run_sql_file "$tmp_sql"; then
+    if ! engine_run_sql_file "$tmp_sql" false; then
         rm -f "$tmp_sql"
         die "DDL setup failed"
     fi

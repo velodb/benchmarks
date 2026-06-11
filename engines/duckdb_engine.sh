@@ -92,7 +92,10 @@ engine_init() {
 # 2. Execute a SQL file using DuckDB CLI
 engine_run_sql_file() {
     local sql_file="$1"
+    local apply_session="${2:-true}"
     local dbfile
+    local exec_file
+    local temp_file=""
 
     if [ ! -f "$sql_file" ]; then
         echo "ERROR: SQL file not found: $sql_file" >&2
@@ -102,10 +105,17 @@ engine_run_sql_file() {
     dbfile="$(resolve_duckdb_dbfile "${db:-}")" || return 1
     ensure_duckdb_parent_dir "$dbfile"
 
-    if duckdb_exec_file "$dbfile" "$sql_file"; then
+    exec_file="$(engine_prepare_sql_file_with_session "$sql_file" "$apply_session" "duckdb_sql")" || return 1
+    if [ "$exec_file" != "$sql_file" ]; then
+        temp_file="$exec_file"
+    fi
+
+    if duckdb_exec_file "$dbfile" "$exec_file"; then
+        [ -n "$temp_file" ] && rm -f "$temp_file"
         return 0
     fi
 
+    [ -n "$temp_file" ] && rm -f "$temp_file"
     echo "ERROR: Failed to execute SQL file: $sql_file" >&2
     return 1
 }
@@ -114,7 +124,9 @@ engine_run_sql_file() {
 engine_run_sql() {
     local target_db="$1"
     local sql_statement="$2"
+    local apply_session="${3:-true}"
     local dbfile
+    local duckdb_sql
 
     if [ -z "$sql_statement" ]; then
         echo "ERROR: SQL statement cannot be empty" >&2
@@ -123,8 +135,9 @@ engine_run_sql() {
 
     dbfile="$(resolve_duckdb_dbfile "${target_db:-${db:-}}")" || return 1
     ensure_duckdb_parent_dir "$dbfile"
+    duckdb_sql="$(engine_prepend_session_sql "$sql_statement" "$apply_session")"
 
-    if duckdb_exec_sql "$dbfile" "$sql_statement"; then
+    if duckdb_exec_sql "$dbfile" "$duckdb_sql"; then
         return 0
     fi
 
@@ -263,7 +276,9 @@ engine_get_plan() {
     local db_name="$1"
     local sql_statement="$2"
     local dbfile
+    local duckdb_sql
 
     dbfile="$(resolve_duckdb_dbfile "${db_name:-${db:-}}")" || return 1
-    duckdb_exec_sql "$dbfile" "EXPLAIN ${sql_statement}" 2>/dev/null || true
+    duckdb_sql="$(engine_prepend_session_sql "EXPLAIN ${sql_statement}" true)"
+    duckdb_exec_sql "$dbfile" "$duckdb_sql" 2>/dev/null || true
 }
