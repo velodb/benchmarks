@@ -113,6 +113,7 @@ engine_run_sql() {
     local sql_statement="$2"
     local apply_session="${3:-true}"
     local clickhouse_sql
+    local output
 
     if [ -z "$sql_statement" ]; then
         echo "ERROR: SQL statement cannot be empty" >&2
@@ -134,10 +135,11 @@ engine_run_sql() {
     clickhouse_sql="$(engine_prepend_session_sql "$sql_statement" "$apply_session")"
 
     # Execute the SQL statement
-    if $CLICKHOUSE_CMD "${args[@]}" --multiquery --query="$clickhouse_sql"; then
+    if output=$($CLICKHOUSE_CMD "${args[@]}" --multiquery --query="$clickhouse_sql" 2>&1); then
         return 0
     else
         echo "ERROR: Failed to execute SQL statement: $sql_statement" >&2
+        [ -n "$output" ] && echo "$output" >&2
         return 1
     fi
 }

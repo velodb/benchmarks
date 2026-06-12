@@ -127,6 +127,7 @@ engine_run_sql() {
     local apply_session="${3:-true}"
     local dbfile
     local duckdb_sql
+    local output
 
     if [ -z "$sql_statement" ]; then
         echo "ERROR: SQL statement cannot be empty" >&2
@@ -137,11 +138,12 @@ engine_run_sql() {
     ensure_duckdb_parent_dir "$dbfile"
     duckdb_sql="$(engine_prepend_session_sql "$sql_statement" "$apply_session")"
 
-    if duckdb_exec_sql "$dbfile" "$duckdb_sql"; then
+    if output=$(duckdb_exec_sql "$dbfile" "$duckdb_sql" 2>&1); then
         return 0
     fi
 
     echo "ERROR: Failed to execute SQL statement" >&2
+    [ -n "$output" ] && echo "$output" >&2
     return 1
 }
 
