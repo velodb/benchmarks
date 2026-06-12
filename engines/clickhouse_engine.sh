@@ -69,6 +69,9 @@ engine_init() {
 # 2. Execute a SQL file using clickhouse client
 engine_run_sql_file() {
     local sql_file="$1"
+    local apply_session="${2:-true}"
+    local exec_file
+    local temp_file=""
 
     if [ ! -f "$sql_file" ]; then
         echo "ERROR: SQL file not found: $sql_file" >&2
@@ -88,10 +91,17 @@ engine_run_sql_file() {
         args+=("--password=$password")
     fi
 
+    exec_file="$(engine_prepare_sql_file_with_session "$sql_file" "$apply_session" "clickhouse_sql")" || return 1
+    if [ "$exec_file" != "$sql_file" ]; then
+        temp_file="$exec_file"
+    fi
+
     # Execute the SQL file
-    if $CLICKHOUSE_CMD "${args[@]}" < "$sql_file"; then
+    if $CLICKHOUSE_CMD "${args[@]}" --multiquery < "$exec_file"; then
+        [ -n "$temp_file" ] && rm -f "$temp_file"
         return 0
     else
+        [ -n "$temp_file" ] && rm -f "$temp_file"
         echo "ERROR: Failed to execute SQL file: $sql_file" >&2
         return 1
     fi
@@ -101,6 +111,9 @@ engine_run_sql_file() {
 engine_run_sql() {
     local db="$1"
     local sql_statement="$2"
+    local apply_session="${3:-true}"
+    local clickhouse_sql
+    local output
 
     if [ -z "$sql_statement" ]; then
         echo "ERROR: SQL statement cannot be empty" >&2
@@ -119,12 +132,14 @@ engine_run_sql() {
         args+=("--password=$password")
     fi
     [ -n "$db" ] && args+=("--database=$db")
+    clickhouse_sql="$(engine_prepend_session_sql "$sql_statement" "$apply_session")"
 
     # Execute the SQL statement
-    if $CLICKHOUSE_CMD "${args[@]}" --query="$sql_statement"; then
+    if output=$($CLICKHOUSE_CMD "${args[@]}" --multiquery --query="$clickhouse_sql" 2>&1); then
         return 0
     else
         echo "ERROR: Failed to execute SQL statement: $sql_statement" >&2
+        [ -n "$output" ] && echo "$output" >&2
         return 1
     fi
 }

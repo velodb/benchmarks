@@ -32,6 +32,7 @@ engine_init() {
 #    It should handle connection parameters and error reporting.
 #    
 #    @param $1: Absolute path to the SQL file to execute
+#    @param $2: Optional. Whether to apply session SQL first (default: true)
 #    @return: 0 on success, non-zero on failure
 engine_run_sql_file() {
     local sql_file="$1"
@@ -44,7 +45,9 @@ engine_run_sql_file() {
 #    This function executes a single SQL statement against the target database.
 #    It should handle connection parameters and error reporting.
 #    
-#    @param $1: SQL statement to execute
+#    @param $1: Database name
+#    @param $2: SQL statement to execute
+#    @param $3: Optional. Whether to apply session SQL first (default: true)
 #    @return: 0 on success, non-zero on failure
 engine_run_sql() {
     local db="$1"
@@ -177,6 +180,64 @@ engine_fetch_profile() {
 engine_get_plan() {
     echo "Plan collection not supported by this engine, skipping..." >&2
     return 1
+}
+
+engine_get_session_sql_content() {
+    local apply_session="${1:-true}"
+    local session_file="${SESSION_FILE:-session/session.sql}"
+
+    if [ "$apply_session" = "false" ] || [[ "${session:-true}" != "true" ]]; then
+        return 0
+    fi
+
+    if [[ "$session_file" != /* ]]; then
+        if [ -n "${TEST_ROOT:-}" ]; then
+            session_file="$TEST_ROOT/$session_file"
+        else
+            session_file="$(pwd)/$session_file"
+        fi
+    fi
+
+    if [ ! -f "$session_file" ]; then
+        return 0
+    fi
+
+    envsubst < "$session_file"
+}
+
+engine_prepend_session_sql() {
+    local sql_statement="$1"
+    local apply_session="${2:-true}"
+    local session_content
+
+    session_content="$(engine_get_session_sql_content "$apply_session")"
+    if [ -n "$session_content" ]; then
+        printf '%s\n%s\n' "$session_content" "$sql_statement"
+    else
+        printf '%s\n' "$sql_statement"
+    fi
+}
+
+engine_prepare_sql_file_with_session() {
+    local sql_file="$1"
+    local apply_session="${2:-true}"
+    local temp_prefix="${3:-session_sql}"
+    local session_content
+    local tmp_sql
+
+    session_content="$(engine_get_session_sql_content "$apply_session")"
+    if [ -z "$session_content" ]; then
+        printf '%s\n' "$sql_file"
+        return 0
+    fi
+
+    create_temp_sql_file "$temp_prefix"
+    tmp_sql="$LAST_TEMP_FILE"
+    {
+        printf '%s\n' "$session_content"
+        cat "$sql_file"
+    } > "$tmp_sql"
+    printf '%s\n' "$tmp_sql"
 }
 
 # Helper function to escape XML content
