@@ -120,6 +120,7 @@ engine_run_sql_file() {
 engine_run_sql() {
     local db="$1"
     local sql_statement="$2"
+    local capture_last_query_id="${3:-true}"
     
     if [ -z "$sql_statement" ]; then
         echo "ERROR: SQL statement cannot be empty" >&2
@@ -133,11 +134,25 @@ engine_run_sql() {
     local args=(-h"$fe_host" -P"$fe_query_port" -u"$user")
     [ -n "$db" ] && args+=(-D"$db")
 
+    local mysql_sql="$sql_statement"
+    if [[ "${profile:-}" == "true" && "$capture_last_query_id" == "true" ]]; then
+        local normalized_sql
+        normalized_sql=$(printf '%s' "$sql_statement" | sed -e ':trim' -e 's/[[:space:]]*$//' \
+            -e '/;$/ { s/;*$//; b trim; }')
+        mysql_sql="SET enable_profile = true; ${normalized_sql}; SELECT last_query_id();"
+    fi
+
+    local last_query_id_file="${RESULT_DIR:-/tmp}/.last_query_id"
+
     # Execute the SQL statement
-    if output=$(mysql "${args[@]}" -e "$sql_statement" 2>&1); then
+    if output=$(mysql "${args[@]}" --batch --skip-column-names -e "$mysql_sql" 2>&1); then
+        if [[ "${profile:-}" == "true" && "$capture_last_query_id" == "true" ]]; then
+            echo "$output" | sed '/^[[:space:]]*$/d' | tail -n 1 > "$last_query_id_file"
+        fi
         return 0
     else
         echo "ERROR: Failed to execute SQL statement: $sql_statement" >&2
+        echo "$output" >&2
         return 1
     fi
 }
@@ -240,6 +255,54 @@ engine_analyze_table() {
 
 engine_show_column_stats() {
     return 0
+}
+
+# Optional: enable query profile collection for StarRocks.
+#
+# benchmark.sh opens a new mysql connection for each query, so the query runner
+# also enables the session variable immediately before the measured statement.
+# This function is a capability check that keeps the shared profile hook active.
+engine_enable_profile() {
+    export MYSQL_PWD="${password:-}"
+    mysql -h"$fe_host" -P"$fe_query_port" -u"$user" -e "SET enable_profile = true;" >/dev/null 2>&1
+}
+
+# Optional: disable query profile collection.
+engine_disable_profile() {
+    return 0
+}
+
+# Optional: get last query id (best effort)
+engine_get_last_query_id() {
+    local last_query_id_file="${RESULT_DIR:-/tmp}/.last_query_id"
+    if [ -f "$last_query_id_file" ]; then
+        cat "$last_query_id_file"
+    else
+        export MYSQL_PWD="${password:-}"
+        mysql -h"$fe_host" -P"$fe_query_port" -u"$user" -N -s -e "SELECT last_query_id();" 2>/dev/null
+    fi
+}
+
+# Optional: fetch profile content by query id
+engine_fetch_profile() {
+    local query_id="$1"
+    if [[ ! "$query_id" =~ ^[0-9A-Za-z_-]+$ ]]; then
+        return 1
+    fi
+
+    export MYSQL_PWD="${password:-}"
+    mysql -h"$fe_host" -P"$fe_query_port" -u"$user" -N -s --raw \
+        -e "SELECT get_query_profile('${query_id}');" 2>/dev/null
+}
+
+# Optional: fetch plan text for a query
+engine_get_plan() {
+    local db_name="$1"
+    local sql_statement="$2"
+    export MYSQL_PWD="${password:-}"
+    local args=(-h"$fe_host" -P"$fe_query_port" -u"$user" -N -s)
+    [ -n "$db_name" ] && args+=(-D"$db_name")
+    mysql "${args[@]}" -e "EXPLAIN VERBOSE ${sql_statement}" 2>/dev/null || true
 }
 
 # 3. Generate JDBC DataSource XML configuration for Starrocks
