@@ -1,0 +1,1 @@
+INSERT INTO household_demographics (hd_demo_sk, hd_income_band_sk, hd_buy_potential, hd_dep_count, hd_vehicle_count) SELECT hd_demo_sk, hd_income_band_sk, hd_buy_potential, hd_dep_count, hd_vehicle_count FROM tpcds.sf1000.household_demographics;
