@@ -74,9 +74,9 @@ Our goal is to build `velodb.github.io/benchmarks` into the industry's most trus
    CLEAR_CACHE_SCOPE=before_query \
    bash benchmark.sh --config benchmarks/clickbench_update/percent_100/velodb-cloud/benchmark.yaml
    ```
-   - `DISABLE_DORIS_PAGE_CACHE` — ensures Doris BE
-     `disable_storage_page_cache` matches the requested value. The default is
-     `false`; before changing anything, the engine reads
+   - `DISABLE_DORIS_PAGE_CACHE` — when set to `true` or `false`, ensures Doris BE
+     `disable_storage_page_cache` matches the requested value. When unset, the
+     engine does not change Doris page cache configuration. Before changing anything, the engine reads
      `GET /api/show_config` on each BE and only calls `/api/update_config` when
      the current value differs from the requested value.
    - `CLEAR_FILE_CACHE` — authenticated
@@ -177,8 +177,8 @@ This document details how to conduct performance testing for different databases
 3. Disable all result-cache features on the system under test during testing to ensure the validity of performance data.
 4. Ensure that the same test set uses consistent SQL logic and table data across different systems under test for fair comparison.
 5. You can directly use the provided test sets. Lakehouse data may not be publicly readable, so you need to prepare test data in advance. There will be a dedicated section later on how to prepare Iceberg datasets.
-6. For VeloDB / Doris cloud runs you can configure Doris page cache through
-   `DISABLE_DORIS_PAGE_CACHE` and clear BE caches through two independent
+6. For VeloDB / Doris cloud runs you can explicitly configure Doris page cache through
+   `DISABLE_DORIS_PAGE_CACHE=true|false` and clear BE caches through two independent
    switches: `CLEAR_FILE_CACHE`, `CLEAR_SYS_PAGE_CACHE`.
    `BE_HOSTS` can be provided explicitly as a comma-separated list; when it is
    empty, Doris tries to discover BE / Compute hosts from the FE. `CLEAR_CACHE_SCOPE` controls timing

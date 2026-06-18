@@ -1102,7 +1102,7 @@ main() {
     profile="${profile:-${PROFILE:-false}}"
     plan="${plan:-${PLAN:-false}}"
     clear_file_cache="${clear_file_cache:-${CLEAR_FILE_CACHE:-false}}"
-    disable_doris_page_cache="${disable_doris_page_cache:-${DISABLE_DORIS_PAGE_CACHE:-false}}"
+    disable_doris_page_cache="${disable_doris_page_cache:-${DISABLE_DORIS_PAGE_CACHE:-}}"
     clear_sys_page_cache="${clear_sys_page_cache:-${CLEAR_SYS_PAGE_CACHE:-false}}"
     clear_cache_scope="${clear_cache_scope:-${CLEAR_CACHE_SCOPE:-cold}}"
     be_hosts="${be_hosts:-${BE_HOSTS:-}}"
@@ -1141,11 +1141,20 @@ main() {
     else
         clear_file_cache="false"
     fi
-    if [[ "${disable_doris_page_cache,,}" == "true" ]]; then
-        disable_doris_page_cache="true"
-    else
-        disable_doris_page_cache="false"
-    fi
+    case "${disable_doris_page_cache,,}" in
+        true)
+            disable_doris_page_cache="true"
+            ;;
+        false)
+            disable_doris_page_cache="false"
+            ;;
+        "")
+            disable_doris_page_cache=""
+            ;;
+        *)
+            die "Invalid disable_doris_page_cache: ${disable_doris_page_cache} (allowed: true, false)"
+            ;;
+    esac
     if [[ "${clear_sys_page_cache,,}" == "true" ]]; then
         clear_sys_page_cache="true"
     else

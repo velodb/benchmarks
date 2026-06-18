@@ -22,7 +22,7 @@ parameters:
   cold_query_count: "${COLD_QUERY_COUNT:-1}"
   hot_query_count: "${HOT_QUERY_COUNT:-2}"
   clear_file_cache: "${CLEAR_FILE_CACHE:-false}"
-  disable_doris_page_cache: "${DISABLE_DORIS_PAGE_CACHE:-false}"
+  disable_doris_page_cache: "${DISABLE_DORIS_PAGE_CACHE:-}"
   clear_sys_page_cache: "${CLEAR_SYS_PAGE_CACHE:-false}"
   clear_cache_scope: "${CLEAR_CACHE_SCOPE:-before_query}"
   clear_file_cache_max_size_gb: "${CLEAR_FILE_CACHE_MAX_SIZE_GB:-0}"
