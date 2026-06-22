@@ -344,6 +344,7 @@ collect_stack_trace_once() {
             } >> "$output_file"
         fi
         rm -f "$error_file"
+        echo "Stack trace saved: $output_file"
     done < <(list_stack_trace_be_hosts)
 
     return 0

@@ -24,7 +24,7 @@ assert_file_contains() {
 }
 
 test_collect_stack_trace_once_uses_be_http_port_and_keeps_failures_nonfatal() {
-    local tmp_dir mock_bin be1_file be2_file
+    local tmp_dir mock_bin be1_file be2_file output
     tmp_dir="$(mktemp -d)"
     mock_bin="$tmp_dir/bin"
     mkdir -p "$mock_bin" "$tmp_dir/results"
@@ -41,7 +41,7 @@ printf 'stack trace for %s\n' "$url"
 MOCK
     chmod +x "$mock_bin/curl"
 
-    PATH="$mock_bin:$PATH" \
+    output="$(PATH="$mock_bin:$PATH" \
     CURL_LOG="$tmp_dir/curl.log" \
     RESULT_DIR="$tmp_dir/results" \
     be_hosts="be1,be2" \
@@ -49,7 +49,7 @@ MOCK
     user="bench" \
     password="" \
     STACK_TRACE_MONITOR_DIR="" \
-        collect_stack_trace_once
+        collect_stack_trace_once)"
 
     be1_file="$(find "$tmp_dir/results/stack_trace/be1" -type f -name '*.txt' | head -n 1)"
     be2_file="$(find "$tmp_dir/results/stack_trace/be2" -type f -name '*.txt' | head -n 1)"
@@ -60,6 +60,9 @@ MOCK
     assert_file_contains "$tmp_dir/curl.log" "http://be2:18040/api/stack_trace"
     assert_file_contains "$be1_file" "stack trace for http://be1:18040/api/stack_trace"
     assert_file_contains "$be2_file" "ERROR: stack trace fetch failed for be2"
+    printf '%s\n' "$output" > "$tmp_dir/output.log"
+    assert_file_contains "$tmp_dir/output.log" "Stack trace saved: $be1_file"
+    assert_file_contains "$tmp_dir/output.log" "Stack trace saved: $be2_file"
 }
 
 test_archive_and_upload_stack_traces_uses_file_server_and_logs_public_url() {
