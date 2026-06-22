@@ -18,6 +18,11 @@ ENGINE_TYPE=""
 RESULT_DIR=""
 TIMESTAMP=""
 LAST_TEMP_FILE=""
+STACK_TRACE_MONITOR_PID=""
+STACK_TRACE_MONITOR_DIR=""
+STACK_TRACE_MONITOR_ARCHIVE=""
+STACK_TRACE_MONITOR_STARTED="false"
+STACK_TRACE_MONITOR_FINALIZED="false"
 
 create_temp_sql_file() {
     local prefix="$1"
@@ -243,6 +248,272 @@ load_storage_config() {
     export STORAGE_SECRET_KEY=$(eval echo "$raw_secret_key")
 
     echo "Storage: endpoint=$STORAGE_ENDPOINT bucket=$STORAGE_BUCKET"
+}
+
+sanitize_stack_trace_path_component() {
+    local value="$1"
+    value="${value//[^a-zA-Z0-9_.-]/_}"
+    if [ -z "$value" ]; then
+        value="unknown"
+    fi
+    printf '%s' "$value"
+}
+
+list_stack_trace_be_hosts() {
+    local raw="${be_hosts:-}"
+    local host
+    local -a stack_trace_hosts=()
+    [ -z "$raw" ] && return 0
+
+    IFS=',' read -r -a stack_trace_hosts <<< "$raw"
+    for host in "${stack_trace_hosts[@]}"; do
+        host="$(echo "$host" | xargs)"
+        [ -n "$host" ] && printf '%s\n' "$host"
+    done
+}
+
+ensure_stack_trace_be_hosts() {
+    if [ -n "${be_hosts:-}" ]; then
+        return 0
+    fi
+
+    if type -t discover_be_hosts_from_fe >/dev/null 2>&1; then
+        echo "be_hosts is empty; discovering BE hosts for stack trace monitor..."
+        if ! discover_be_hosts_from_fe; then
+            echo "WARNING: failed to discover BE hosts; stack trace monitor will be skipped." >&2
+            return 1
+        fi
+    fi
+
+    [ -n "${be_hosts:-}" ]
+}
+
+collect_stack_trace_once() {
+    local trace_dir="${STACK_TRACE_MONITOR_DIR:-${RESULT_DIR}/stack_trace}"
+    local timestamp
+    local host
+    local port="${be_http_port:-8040}"
+    local timeout="${stack_trace_curl_timeout_seconds:-${STACK_TRACE_CURL_TIMEOUT_SECONDS:-30}}"
+    local auth_user="${user:-root}"
+    local auth_password="${password:-}"
+
+    if [ -z "${RESULT_DIR:-}" ]; then
+        echo "WARNING: RESULT_DIR is empty; skipping stack trace collection." >&2
+        return 0
+    fi
+
+    if ! command -v curl >/dev/null 2>&1; then
+        echo "WARNING: curl not found; skipping stack trace collection." >&2
+        return 0
+    fi
+
+    STACK_TRACE_MONITOR_DIR="$trace_dir"
+    mkdir -p "$trace_dir"
+    timestamp="$(date '+%Y%m%d_%H%M%S')"
+
+    while IFS= read -r host; do
+        local safe_host node_dir output_file error_file url status
+        safe_host="$(sanitize_stack_trace_path_component "$host")"
+        node_dir="$trace_dir/$safe_host"
+        output_file="$node_dir/${timestamp}.txt"
+        error_file="$(mktemp "${TMPDIR:-/tmp}/stack_trace_curl.XXXXXX")" || {
+            echo "WARNING: failed to create stack trace curl stderr file." >&2
+            return 0
+        }
+        url="http://${host}:${port}/api/stack_trace"
+
+        mkdir -p "$node_dir"
+        {
+            printf 'timestamp=%s\n' "$timestamp"
+            printf 'be_host=%s\n' "$host"
+            printf 'url=%s\n\n' "$url"
+        } > "$output_file"
+
+        status=0
+        if curl -fsS --max-time "$timeout" -u "${auth_user}:${auth_password}" "$url" >> "$output_file" 2>"$error_file"; then
+            :
+        else
+            status=$?
+            {
+                printf '\nERROR: stack trace fetch failed for %s\n' "$host"
+                printf 'curl_exit_code=%s\n' "$status"
+                if [ -s "$error_file" ]; then
+                    printf '\n--- curl stderr ---\n'
+                    sed -e 's/[[:cntrl:]]//g' "$error_file"
+                fi
+            } >> "$output_file"
+        fi
+        rm -f "$error_file"
+    done < <(list_stack_trace_be_hosts)
+
+    return 0
+}
+
+start_stack_trace_monitor() {
+    local interval="${stack_trace_interval_seconds:-${STACK_TRACE_INTERVAL_SECONDS:-120}}"
+    local host_count=0
+
+    if [[ "${stack_trace_monitor:-true}" != "true" ]]; then
+        echo "Stack trace monitor disabled, skipping"
+        return 0
+    fi
+
+    if ! [[ "$interval" =~ ^[0-9]+$ ]] || [ "$interval" -le 0 ]; then
+        echo "WARNING: invalid stack_trace_interval_seconds=${interval}; using 120." >&2
+        interval=120
+    fi
+    stack_trace_interval_seconds="$interval"
+
+    if ! ensure_stack_trace_be_hosts; then
+        return 0
+    fi
+
+    host_count=$(list_stack_trace_be_hosts | wc -l | xargs)
+    if [ "$host_count" -eq 0 ]; then
+        echo "WARNING: no BE hosts configured; stack trace monitor will be skipped." >&2
+        return 0
+    fi
+
+    STACK_TRACE_MONITOR_DIR="${RESULT_DIR}/stack_trace"
+    mkdir -p "$STACK_TRACE_MONITOR_DIR"
+
+    echo "Starting BE stack trace monitor: ${host_count} hosts, interval=${interval}s, port=${be_http_port:-8040}"
+    (
+        while :; do
+            collect_stack_trace_once || true
+            sleep "$interval" || break
+        done
+    ) &
+    STACK_TRACE_MONITOR_PID="$!"
+    STACK_TRACE_MONITOR_STARTED="true"
+}
+
+stop_stack_trace_monitor() {
+    if [[ "${STACK_TRACE_MONITOR_STARTED:-false}" != "true" || -z "${STACK_TRACE_MONITOR_PID:-}" ]]; then
+        return 0
+    fi
+
+    if kill -0 "$STACK_TRACE_MONITOR_PID" >/dev/null 2>&1; then
+        echo "Stopping BE stack trace monitor..."
+        kill "$STACK_TRACE_MONITOR_PID" >/dev/null 2>&1 || true
+        wait "$STACK_TRACE_MONITOR_PID" 2>/dev/null || true
+    fi
+
+    STACK_TRACE_MONITOR_PID=""
+    STACK_TRACE_MONITOR_STARTED="false"
+    return 0
+}
+
+generate_stack_trace_upload_uid() {
+    if [ -n "${STACK_TRACE_UPLOAD_UID:-}" ]; then
+        printf '%s' "$STACK_TRACE_UPLOAD_UID"
+        return 0
+    fi
+
+    if command -v uuidgen >/dev/null 2>&1; then
+        uuidgen | tr '[:upper:]' '[:lower:]'
+    elif [ -r /proc/sys/kernel/random/uuid ]; then
+        cat /proc/sys/kernel/random/uuid
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import uuid; print(uuid.uuid4())'
+    else
+        printf '%s-%s\n' "$(date '+%Y%m%d%H%M%S')" "$$"
+    fi
+}
+
+upload_stack_trace_archive() {
+    local archive_path="$1"
+    local upload_enabled="${stack_trace_upload:-${STACK_TRACE_UPLOAD:-true}}"
+    local upload_enabled_lower
+    local endpoint="${file_server_endpoint:-${FILE_SERVER_ENDPOINT:-http://justtmp.oss-cn-beijing.aliyuncs.com}}"
+    local path_prefix="${stack_trace_file_server_prefix:-${STACK_TRACE_FILE_SERVER_PREFIX:-rqg-abtest/case_result}}"
+    local content_type="${stack_trace_upload_content_type:-${STACK_TRACE_UPLOAD_CONTENT_TYPE:-application/gzip}}"
+    local timeout="${stack_trace_upload_timeout_seconds:-${STACK_TRACE_UPLOAD_TIMEOUT_SECONDS:-30}}"
+    local uid filename upload_url public_url
+
+    upload_enabled_lower="$(printf '%s' "$upload_enabled" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$upload_enabled_lower" != "true" ]]; then
+        echo "Stack trace archive upload disabled, keeping local archive: $archive_path"
+        return 0
+    fi
+
+    if ! command -v curl >/dev/null 2>&1; then
+        echo "WARNING: curl not found; stack trace archive kept local: $archive_path" >&2
+        return 0
+    fi
+
+    if ! [[ "$timeout" =~ ^[0-9]+$ ]] || [ "$timeout" -le 0 ]; then
+        echo "WARNING: invalid stack_trace_upload_timeout_seconds=${timeout}; using 30." >&2
+        timeout=30
+    fi
+
+    endpoint="${endpoint%/}"
+    path_prefix="${path_prefix#/}"
+    path_prefix="${path_prefix%/}"
+    uid="$(generate_stack_trace_upload_uid)"
+    filename="$(basename "$archive_path")"
+    upload_url="${endpoint}/${path_prefix}/${uid}/${filename}"
+    public_url="${upload_url//-internal/}"
+
+    echo "Uploading stack trace archive to file server..."
+    if curl -fsS --max-time "$timeout" \
+        -H "Content-Disposition: inline" \
+        -H "Content-Type: ${content_type}" \
+        -T "$archive_path" \
+        "$upload_url"; then
+        echo
+        echo "Stack trace archive URL: $public_url"
+    else
+        echo "WARNING: stack trace archive upload failed; local archive: $archive_path" >&2
+    fi
+
+    return 0
+}
+
+archive_and_upload_stack_traces() {
+    local trace_dir="${STACK_TRACE_MONITOR_DIR:-${RESULT_DIR}/stack_trace}"
+    local timestamp_part="${TIMESTAMP:-$(date '+%Y%m%d_%H%M%S')}"
+    local archive_path="${RESULT_DIR}/stack_trace_${timestamp_part}.tar.gz"
+
+    if [ -z "${RESULT_DIR:-}" ] || [ ! -d "$trace_dir" ]; then
+        return 0
+    fi
+
+    if ! find "$trace_dir" -type f -print -quit | grep -q .; then
+        echo "No stack trace files collected, skipping archive upload"
+        return 0
+    fi
+
+    if ! command -v tar >/dev/null 2>&1; then
+        echo "WARNING: tar not found; cannot archive stack trace files." >&2
+        return 0
+    fi
+
+    echo "Archiving BE stack traces: $archive_path"
+    if ! tar -czf "$archive_path" -C "$RESULT_DIR" "$(basename "$trace_dir")"; then
+        echo "WARNING: failed to archive stack trace files." >&2
+        return 0
+    fi
+
+    STACK_TRACE_MONITOR_ARCHIVE="$archive_path"
+    upload_stack_trace_archive "$archive_path"
+    return 0
+}
+
+finalize_stack_trace_monitor() {
+    local status="${1:-0}"
+
+    if [[ "${STACK_TRACE_MONITOR_FINALIZED:-false}" == "true" ]]; then
+        return "$status"
+    fi
+    STACK_TRACE_MONITOR_FINALIZED="true"
+
+    set +e
+    stop_stack_trace_monitor
+    archive_and_upload_stack_traces
+    set -e
+
+    return "$status"
 }
 
 # Load database engine
@@ -1101,6 +1372,14 @@ main() {
     clean_trash="${clean_trash:-${CLEAN_TRASH:-false}}"
     profile="${profile:-${PROFILE:-false}}"
     plan="${plan:-${PLAN:-false}}"
+    stack_trace_monitor="${stack_trace_monitor:-${STACK_TRACE_MONITOR:-true}}"
+    stack_trace_upload="${stack_trace_upload:-${STACK_TRACE_UPLOAD:-true}}"
+    stack_trace_interval_seconds="${stack_trace_interval_seconds:-${STACK_TRACE_INTERVAL_SECONDS:-120}}"
+    stack_trace_curl_timeout_seconds="${stack_trace_curl_timeout_seconds:-${STACK_TRACE_CURL_TIMEOUT_SECONDS:-30}}"
+    stack_trace_upload_timeout_seconds="${stack_trace_upload_timeout_seconds:-${STACK_TRACE_UPLOAD_TIMEOUT_SECONDS:-30}}"
+    stack_trace_file_server_prefix="${stack_trace_file_server_prefix:-${STACK_TRACE_FILE_SERVER_PREFIX:-rqg-abtest/case_result}}"
+    stack_trace_upload_content_type="${stack_trace_upload_content_type:-${STACK_TRACE_UPLOAD_CONTENT_TYPE:-application/gzip}}"
+    file_server_endpoint="${file_server_endpoint:-${FILE_SERVER_ENDPOINT:-http://justtmp.oss-cn-beijing.aliyuncs.com}}"
     clear_file_cache="${clear_file_cache:-${CLEAR_FILE_CACHE:-false}}"
     disable_doris_page_cache="${disable_doris_page_cache:-${DISABLE_DORIS_PAGE_CACHE:-}}"
     clear_sys_page_cache="${clear_sys_page_cache:-${CLEAR_SYS_PAGE_CACHE:-false}}"
@@ -1126,6 +1405,24 @@ main() {
     fi
     if [[ "${plan,,}" != "true" ]]; then
         plan="false"
+    fi
+    local stack_trace_monitor_lower
+    local stack_trace_upload_lower
+    stack_trace_monitor_lower="$(printf '%s' "$stack_trace_monitor" | tr '[:upper:]' '[:lower:]')"
+    stack_trace_upload_lower="$(printf '%s' "$stack_trace_upload" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$stack_trace_monitor_lower" == "true" ]]; then
+        stack_trace_monitor="true"
+    else
+        stack_trace_monitor="false"
+    fi
+    if [[ "$stack_trace_upload_lower" == "true" ]]; then
+        stack_trace_upload="true"
+    else
+        stack_trace_upload="false"
+    fi
+    if ! [[ "$stack_trace_curl_timeout_seconds" =~ ^[0-9]+$ ]] || [ "$stack_trace_curl_timeout_seconds" -le 0 ]; then
+        echo "WARNING: invalid stack_trace_curl_timeout_seconds=${stack_trace_curl_timeout_seconds}; using 30." >&2
+        stack_trace_curl_timeout_seconds="30"
     fi
     if ! [[ "$cold_query_count" =~ ^[0-9]+$ ]]; then
         die "Invalid cold_query_count: ${cold_query_count}"
@@ -1216,6 +1513,11 @@ main() {
     
     # Run benchmark workflow
     echo "Starting benchmark: $ENGINE_TYPE"
+    start_stack_trace_monitor
+    if [[ "${STACK_TRACE_MONITOR_STARTED:-false}" == "true" ]]; then
+        trap 'stack_trace_status=$?; finalize_stack_trace_monitor "$stack_trace_status"; exit "$stack_trace_status"' EXIT
+    fi
+
     # 1. Run DDL first so the database and tables exist
     if [[ "$load" == "true" ]]; then
         run_ddl
@@ -1263,6 +1565,9 @@ main() {
     if [[ "$vectordbbench" == "true" ]]; then
         run_vectordbbench
     fi
+
+    finalize_stack_trace_monitor 0
+    trap - EXIT
     
     # Generation Result
     generate_result
