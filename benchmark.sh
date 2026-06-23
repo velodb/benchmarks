@@ -1102,6 +1102,7 @@ main() {
     profile="${profile:-${PROFILE:-false}}"
     plan="${plan:-${PLAN:-false}}"
     clear_file_cache="${clear_file_cache:-${CLEAR_FILE_CACHE:-false}}"
+    doris_page_cache_action="${doris_page_cache_action:-${DORIS_PAGE_CACHE_ACTION:-}}"
     disable_doris_page_cache="${disable_doris_page_cache:-${DISABLE_DORIS_PAGE_CACHE:-}}"
     clear_sys_page_cache="${clear_sys_page_cache:-${CLEAR_SYS_PAGE_CACHE:-false}}"
     clear_cache_scope="${clear_cache_scope:-${CLEAR_CACHE_SCOPE:-cold}}"
@@ -1141,18 +1142,52 @@ main() {
     else
         clear_file_cache="false"
     fi
-    case "${disable_doris_page_cache,,}" in
-        true)
-            disable_doris_page_cache="true"
+    case "${doris_page_cache_action,,}" in
+        ""|unchanged|keep|skip|none)
+            doris_page_cache_action="unchanged"
             ;;
-        false)
-            disable_doris_page_cache="false"
-            ;;
-        "")
-            disable_doris_page_cache=""
+        configure|configured|apply|set)
+            doris_page_cache_action="configure"
             ;;
         *)
-            die "Invalid disable_doris_page_cache: ${disable_doris_page_cache} (allowed: true, false)"
+            die "Invalid doris_page_cache_action: ${doris_page_cache_action} (allowed: unchanged, configure)"
+            ;;
+    esac
+    case "${disable_doris_page_cache,,}" in
+        true)
+            if [[ "$doris_page_cache_action" == "unchanged" ]]; then
+                doris_page_cache_action="configure"
+            fi
+            ;;
+        false|"")
+            # false is commonly emitted by workflow UIs as an unchecked boolean.
+            # Keep it as no-op unless DORIS_PAGE_CACHE_ACTION=configure is explicit.
+            ;;
+        unchanged|keep|skip|none)
+            if [[ "$doris_page_cache_action" == "unchanged" ]]; then
+                doris_page_cache_action="unchanged"
+            fi
+            ;;
+        *)
+            die "Invalid disable_doris_page_cache: ${disable_doris_page_cache} (allowed: true, false, unchanged)"
+            ;;
+    esac
+    case "$doris_page_cache_action" in
+        configure)
+            case "${disable_doris_page_cache,,}" in
+                true|false)
+                    disable_doris_page_cache="${disable_doris_page_cache,,}"
+                    ;;
+                "")
+                    disable_doris_page_cache="false"
+                    ;;
+                *)
+                    die "disable_doris_page_cache must be true, false, or empty when doris_page_cache_action=configure"
+                    ;;
+            esac
+            ;;
+        unchanged)
+            disable_doris_page_cache=""
             ;;
     esac
     if [[ "${clear_sys_page_cache,,}" == "true" ]]; then
