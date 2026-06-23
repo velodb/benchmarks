@@ -351,7 +351,7 @@ collect_stack_trace_once() {
 }
 
 start_stack_trace_monitor() {
-    local interval="${stack_trace_interval_seconds:-${STACK_TRACE_INTERVAL_SECONDS:-120}}"
+    local interval="${stack_trace_interval_seconds:-${STACK_TRACE_INTERVAL_SECONDS:-40}}"
     local host_count=0
 
     if [[ "${stack_trace_monitor:-true}" != "true" ]]; then
@@ -360,8 +360,8 @@ start_stack_trace_monitor() {
     fi
 
     if ! [[ "$interval" =~ ^[0-9]+$ ]] || [ "$interval" -le 0 ]; then
-        echo "WARNING: invalid stack_trace_interval_seconds=${interval}; using 120." >&2
-        interval=120
+        echo "WARNING: invalid stack_trace_interval_seconds=${interval}; using 40." >&2
+        interval=40
     fi
     stack_trace_interval_seconds="$interval"
 
@@ -1375,7 +1375,7 @@ main() {
     plan="${plan:-${PLAN:-false}}"
     stack_trace_monitor="${stack_trace_monitor:-${STACK_TRACE_MONITOR:-true}}"
     stack_trace_upload="${stack_trace_upload:-${STACK_TRACE_UPLOAD:-true}}"
-    stack_trace_interval_seconds="${stack_trace_interval_seconds:-${STACK_TRACE_INTERVAL_SECONDS:-120}}"
+    stack_trace_interval_seconds="${stack_trace_interval_seconds:-${STACK_TRACE_INTERVAL_SECONDS:-40}}"
     stack_trace_curl_timeout_seconds="${stack_trace_curl_timeout_seconds:-${STACK_TRACE_CURL_TIMEOUT_SECONDS:-30}}"
     stack_trace_upload_timeout_seconds="${stack_trace_upload_timeout_seconds:-${STACK_TRACE_UPLOAD_TIMEOUT_SECONDS:-30}}"
     stack_trace_file_server_prefix="${stack_trace_file_server_prefix:-${STACK_TRACE_FILE_SERVER_PREFIX:-rqg-abtest/case_result}}"

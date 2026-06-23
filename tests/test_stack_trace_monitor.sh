@@ -127,7 +127,45 @@ MOCK
     [ -f "$archive_path" ] || fail "missing archive after failed upload"
 }
 
+test_start_stack_trace_monitor_defaults_to_40_seconds() {
+    local tmp_dir mock_bin output
+    tmp_dir="$(mktemp -d)"
+    mock_bin="$tmp_dir/bin"
+    mkdir -p "$mock_bin" "$tmp_dir/results"
+
+    cat > "$mock_bin/curl" <<'MOCK'
+#!/usr/bin/env bash
+printf 'stack trace\n'
+MOCK
+    cat > "$mock_bin/sleep" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> "$SLEEP_LOG"
+exit 1
+MOCK
+    chmod +x "$mock_bin/curl" "$mock_bin/sleep"
+
+    output="$(PATH="$mock_bin:$PATH" \
+    SLEEP_LOG="$tmp_dir/sleep.log" \
+    RESULT_DIR="$tmp_dir/results" \
+    be_hosts="be1" \
+    be_http_port="18040" \
+    user="bench" \
+    password="" \
+    stack_trace_monitor="true" \
+    stack_trace_interval_seconds="" \
+    STACK_TRACE_INTERVAL_SECONDS="" \
+    STACK_TRACE_MONITOR_DIR="" \
+    STACK_TRACE_MONITOR_STARTED="false" \
+    STACK_TRACE_MONITOR_PID="" \
+        start_stack_trace_monitor)"
+
+    printf '%s\n' "$output" > "$tmp_dir/output.log"
+    assert_file_contains "$tmp_dir/output.log" "Starting BE stack trace monitor: 1 hosts, interval=40s, port=18040"
+    assert_file_contains "$tmp_dir/sleep.log" "40"
+}
+
 test_collect_stack_trace_once_uses_be_http_port_and_keeps_failures_nonfatal
 test_archive_and_upload_stack_traces_uses_file_server_and_logs_public_url
 test_archive_upload_failure_is_nonfatal
+test_start_stack_trace_monitor_defaults_to_40_seconds
 echo "stack trace monitor tests passed"
