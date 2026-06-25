@@ -1,0 +1,1 @@
+INSERT INTO ship_mode (sm_ship_mode_sk, sm_ship_mode_id, sm_type, sm_code, sm_carrier, sm_contract) SELECT sm_ship_mode_sk, sm_ship_mode_id, sm_type, sm_code, sm_carrier, sm_contract FROM tpcds.sf1000.ship_mode;

@@ -1,0 +1,66 @@
+# Doris TPC-DS SF1000 Benchmark Configuration
+
+# Engine connection information
+engine:
+  type: "doris" # Engine type
+  connection:
+    fe_host: "${FE_HOST:-127.0.0.1}" # Doris Frontend host
+    fe_http_port: "${FE_HTTP_PORT:-8030}" # HTTP port for Doris Frontend
+    fe_query_port: "${FE_QUERY_PORT:-9030}" # Query port for Doris Frontend
+    user: "${DB_USER:-root}" # Doris username
+    password: "${PASSWORD:-}" # Doris password
+    db: "${DB:-tpcds}" # Doris database name
+
+# test execution parameters
+parameters:
+  load: "${LOAD:-false}" # Whether to run data loading phase
+  query: "${QUERY:-false}" # Whether to run benchmark query
+  session: "${SESSION:-false}" # Whether to run session setup phase
+  analyze: "${ANALYZE:-false}" # Whether to run analyze phase
+  analyze_type: "${ANALYZE_TYPE:-analyze_full}" # Type of built-in analyze (analyze_full, analyze_sample)
+  query_times: "${QUERY_TIMES:-3}" # Number of times to run each query
+  jmeter: "${JMETER:-false}" # Whether to run jmeter phase
+  threads: "${JMETER_THREADS:-50}" # Number of JMeter threads
+  loops: "${JMETER_LOOPS:-1}" # Number of loops per thread
+  duration: "${JMETER_DURATION:-180}" # Test duration in seconds (0 = use loops)
+  query_by_query: "${QUERY_BY_QUERY:-true}" # Run queries one by one (true) or concurrently with random selection (false)
+
+# Test resource paths (relative to this YAML file)
+paths:
+  ddl: "ddl/ddl.sql" # DDL setup file
+  session_file: "${SESSION_FILE:-session/session.sql}" # Session setup file
+  analyze_file: "${ANALYZE_FILE:-analyze/analyze.sql}" # Analyze statistics file
+  load_dir: "${LOAD_DIR:-load/load_s3/}" # Directory containing data loading SQL files
+  query_dir: "${QUERY_DIR:-query/}" # Directory containing query SQL files
+  query_mode: "file" # Query file format: "line" (each line is a query) or "file" (entire file is one query)
+storage:
+  endpoint: "${STORAGE_ENDPOINT:-https://s3.us-east-1.amazonaws.com}"
+  region: "${STORAGE_REGION:-us-east-1}"
+  bucket: "${STORAGE_BUCKET:-bench-dataset}"
+  access_key: "${STORAGE_ACCESS_KEY:-xxx}"
+  secret_key: "${STORAGE_SECRET_KEY:-xxx}"
+tables:
+  customer_demographics: 1920800
+  reason: 65
+  warehouse: 20
+  date_dim: 73049
+  catalog_sales: 1439980416
+  call_center: 42
+  inventory: 783000000
+  catalog_returns: 143996756
+  household_demographics: 7200
+  customer_address: 6000000
+  income_band: 20
+  catalog_page: 30000
+  item: 300000
+  web_returns: 71997522
+  web_site: 54
+  promotion: 1500
+  web_sales: 720000376
+  store: 1002
+  web_page: 3000
+  time_dim: 86400
+  store_returns: 287999764
+  store_sales: 2879987999
+  ship_mode: 20
+  customer: 12000000

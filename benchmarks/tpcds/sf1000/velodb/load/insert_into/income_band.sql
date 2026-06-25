@@ -1,0 +1,1 @@
+INSERT INTO income_band (ib_income_band_sk, ib_lower_bound, ib_upper_bound) SELECT ib_income_band_sk, ib_lower_bound, ib_upper_bound FROM tpcds.sf1000.income_band;
