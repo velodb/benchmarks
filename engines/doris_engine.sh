@@ -273,6 +273,7 @@ engine_run_sql() {
     local sql_statement="$2"
     local capture_last_query_id="${3:-true}"
     local error_file=""
+    local sql_file=""
     local status=0
     
     if [ -z "$sql_statement" ]; then
@@ -301,8 +302,14 @@ engine_run_sql() {
         echo "ERROR: Failed to create temporary stderr file" >&2
         return 1
     }
-    if output=$(mysql "${args[@]}" --batch --skip-column-names \
-        -e "$mysql_sql" 2>"$error_file"); then
+    sql_file="$(mktemp "${TMPDIR:-/tmp}/doris_mysql_sql.XXXXXX")" || {
+        echo "ERROR: Failed to create temporary SQL file" >&2
+        rm -f "$error_file"
+        return 1
+    }
+    printf '%s\n' "$mysql_sql" > "$sql_file"
+    if output=$(mysql "${args[@]}" --batch --skip-column-names < "$sql_file" 2>"$error_file"); then
+        rm -f "$sql_file"
         rm -f "$error_file"
         if [ "$capture_last_query_id" = "true" ]; then
             # The last non-empty line of stdout is the query ID.
@@ -315,7 +322,7 @@ engine_run_sql() {
         if [ -s "$error_file" ]; then
             cat "$error_file" >&2
         fi
-        rm -f "$error_file"
+        rm -f "$error_file" "$sql_file"
         return "$status"
     fi
 }

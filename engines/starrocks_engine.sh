@@ -148,6 +148,9 @@ engine_run_sql() {
     local db="$1"
     local sql_statement="$2"
     local capture_last_query_id="${3:-true}"
+    local error_file=""
+    local sql_file=""
+    local status=0
     
     if [ -z "$sql_statement" ]; then
         echo "ERROR: SQL statement cannot be empty" >&2
@@ -173,15 +176,30 @@ engine_run_sql() {
     local last_query_id_file="${RESULT_DIR:-/tmp}/.last_query_id"
 
     # Execute the SQL statement
-    if output=$(mysql "${args[@]}" --batch --skip-column-names -e "$mysql_sql" 2>&1); then
+    error_file="$(mktemp "${TMPDIR:-/tmp}/starrocks_mysql_stderr.XXXXXX")" || {
+        echo "ERROR: Failed to create temporary stderr file" >&2
+        return 1
+    }
+    sql_file="$(mktemp "${TMPDIR:-/tmp}/starrocks_mysql_sql.XXXXXX")" || {
+        echo "ERROR: Failed to create temporary SQL file" >&2
+        rm -f "$error_file"
+        return 1
+    }
+    printf '%s\n' "$mysql_sql" > "$sql_file"
+    if output=$(mysql "${args[@]}" --batch --skip-column-names < "$sql_file" 2>"$error_file"); then
+        rm -f "$sql_file" "$error_file"
         if [[ "${profile:-}" == "true" && "$capture_last_query_id" == "true" ]]; then
             echo "$output" | sed '/^[[:space:]]*$/d' | tail -n 1 > "$last_query_id_file"
         fi
         return 0
     else
+        status=$?
         echo "ERROR: Failed to execute SQL statement: $sql_statement" >&2
-        echo "$output" >&2
-        return 1
+        if [ -s "$error_file" ]; then
+            cat "$error_file" >&2
+        fi
+        rm -f "$error_file" "$sql_file"
+        return "$status"
     fi
 }
 
