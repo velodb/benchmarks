@@ -21,6 +21,28 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/jdbc_utils.sh"
 
 BE_HOSTS_ARR=()
 
+doris_qualified_db() {
+    local db_name="$1"
+
+    if [ -n "${catalog:-}" ] && [ -n "$db_name" ] && [[ "$db_name" != *.* ]]; then
+        printf '%s.%s\n' "$catalog" "$db_name"
+    else
+        printf '%s\n' "$db_name"
+    fi
+}
+
+doris_qualified_table() {
+    local table_name="$1"
+    local db_name
+
+    db_name="$(doris_qualified_db "${db:-}")"
+    if [[ "$table_name" != *.* ]] && [ -n "$db_name" ]; then
+        printf '%s.%s\n' "$db_name" "$table_name"
+    else
+        printf '%s\n' "$table_name"
+    fi
+}
+
 any_clear_cache_enabled() {
     [[ "${clear_file_cache:-false}" == "true" \
     || "${clear_sys_page_cache:-false}" == "true" ]]
@@ -204,6 +226,8 @@ engine_init() {
 # 2. Execute a SQL file using mysql client
 engine_run_sql_file() {
     local sql_file="$1"
+    local apply_session="${2:-true}"
+    local db_name
     local error_file=""
     local status=0
     
@@ -214,6 +238,14 @@ engine_run_sql_file() {
     
     # Set password environment variable for mysql
     export MYSQL_PWD="${password:-}"
+    db_name="${db:-}"
+    # DDL setup passes apply_session=false and may create/drop the catalog itself,
+    # so do not select catalog.db before the catalog exists.
+    if [ "$apply_session" != "false" ]; then
+        db_name="$(doris_qualified_db "$db_name")"
+    fi
+    local args=(-h"$fe_host" -P"$fe_query_port" -u"$user")
+    [ -n "$db_name" ] && args+=(-D"$db_name")
 
     error_file="$(mktemp "${TMPDIR:-/tmp}/doris_mysql_stderr.XXXXXX")" || {
         echo "ERROR: Failed to create temporary stderr file" >&2
@@ -221,13 +253,7 @@ engine_run_sql_file() {
     }
     
     # Execute the SQL file
-    if mysql \
-    -h"$fe_host" \
-    -P"$fe_query_port" \
-    -u"$user" \
-    -D"$db" \
-    2>"$error_file" \
-    < "$sql_file"; then
+    if mysql "${args[@]}" 2>"$error_file" < "$sql_file"; then
         rm -f "$error_file"
         return 0
     else
@@ -259,7 +285,7 @@ engine_run_sql() {
     
     # Build mysql command arguments
     local args=(-h"$fe_host" -P"$fe_query_port" -u"$user")
-    [ -n "${catalog:-}" ] && [ -n "$db" ] && db="${catalog}.${db}"
+    db="$(doris_qualified_db "$db")"
     [ -n "$db" ] && args+=(-D"$db")
     
     local mysql_sql="$sql_statement"
@@ -309,9 +335,7 @@ engine_list_tables() {
     local db_name="$1"
     local args=(-h"$fe_host" -P"$fe_query_port" -u"$user" -N -s)
 
-    if [ -n "${catalog:-}" ]; then
-        db_name="${catalog}.${db_name}"
-    fi
+    db_name="$(doris_qualified_db "$db_name")"
     [ -n "$db_name" ] && args+=(-D"$db_name")
 
     export MYSQL_PWD="${password:-}"
@@ -323,9 +347,7 @@ engine_drop_stats() {
     local table="$2"
     local args=(-h"$fe_host" -P"$fe_query_port" -u"$user")
 
-    if [ -n "${catalog:-}" ]; then
-        db_name="${catalog}.${db_name}"
-    fi
+    db_name="$(doris_qualified_db "$db_name")"
     [ -n "$db_name" ] && args+=(-D"$db_name")
 
     export MYSQL_PWD="${password:-}"
@@ -339,9 +361,7 @@ engine_analyze_table() {
     local args=(-h"$fe_host" -P"$fe_query_port" -u"$user")
     local sql=""
 
-    if [ -n "${catalog:-}" ]; then
-        db_name="${catalog}.${db_name}"
-    fi
+    db_name="$(doris_qualified_db "$db_name")"
     [ -n "$db_name" ] && args+=(-D"$db_name")
 
     case "${analyze_type}" in
@@ -369,9 +389,7 @@ engine_show_column_stats() {
     local table="$2"
     local args=(-h"$fe_host" -P"$fe_query_port" -u"$user")
 
-    if [ -n "${catalog:-}" ]; then
-        db_name="${catalog}.${db_name}"
-    fi
+    db_name="$(doris_qualified_db "$db_name")"
     [ -n "$db_name" ] && args+=(-D"$db_name")
 
     export MYSQL_PWD="${password:-}"
@@ -384,18 +402,10 @@ engine_get_table_rows() {
     local port="${fe_query_port:-9030}"
     local sys_user="${user:-root}"
     local current_db="${db:-}"
-    local qualified_table="$table"
+    local qualified_table
 
-    if [ -n "${catalog:-}" ] && [ -n "$current_db" ]; then
-        current_db="${catalog}.${current_db}"
-    fi
-
-    # Support bare table names in benchmark.yaml tables config when a catalog
-    # is configured, while still allowing callers to pass db.table or
-    # catalog.db.table explicitly.
-    if [[ "$qualified_table" != *.* ]] && [ -n "${catalog:-}" ] && [ -n "${db:-}" ]; then
-        qualified_table="${catalog}.${db}.${qualified_table}"
-    fi
+    current_db="$(doris_qualified_db "$current_db")"
+    qualified_table="$(doris_qualified_table "$table")"
 
     # Do not use `export MYSQL_PWD` to avoid environment pollution
     MYSQL_PWD="${password:-}" mysql -h"${host}" -P"${port}" -u"${sys_user}" "${current_db}" \
@@ -688,7 +698,9 @@ run_clear_cache_actions() {
 engine_get_jdbc_datasource() {
     # Escape any special characters in the password
     local escaped_password
+    local jdbc_db
     escaped_password=$(xml_escape "${password:-}")
+    jdbc_db="$(doris_qualified_db "${db:-}")"
     
     cat << EOF
 <JDBCDataSource guiclass="TestBeanGUI" testclass="JDBCDataSource" testname="JDBC Connection Configuration" enabled="true">
@@ -697,7 +709,7 @@ engine_get_jdbc_datasource() {
   <stringProp name="connectionAge">5000</stringProp>
   <stringProp name="connectionProperties"></stringProp>
   <stringProp name="dataSource">${ENGINE_TYPE:-Doris}</stringProp>
-  <stringProp name="dbUrl">jdbc:mysql://${fe_host}:${fe_query_port}/${db}</stringProp>
+  <stringProp name="dbUrl">jdbc:mysql://${fe_host}:${fe_query_port}/${jdbc_db}</stringProp>
   <stringProp name="driver">com.mysql.cj.jdbc.Driver</stringProp>
   <stringProp name="keepAlive">true</stringProp>
   <stringProp name="password">${escaped_password}</stringProp>
@@ -754,7 +766,7 @@ engine_get_plan() {
     local sql_statement="$2"
     export MYSQL_PWD="${password:-}"
     local args=(-h"$fe_host" -P"$fe_query_port" -u"$user" -N -s)
-    [ -n "${catalog:-}" ] && db_name="${catalog}.${db_name}"
+    db_name="$(doris_qualified_db "$db_name")"
     [ -n "$db_name" ] && args+=(-D"$db_name")
     mysql "${args[@]}" -e "explain memo plan ${sql_statement}" 2>/dev/null || true
 }
@@ -763,7 +775,9 @@ engine_get_plan() {
 engine_get_version() {
     export MYSQL_PWD="${password:-}"
     local args=(-h"$fe_host" -P"$fe_query_port" -u"$user")
-    [ -n "${db:-}" ] && args+=(-D"$db")
+    local db_name
+    db_name="$(doris_qualified_db "${db:-}")"
+    [ -n "$db_name" ] && args+=(-D"$db_name")
 
     local version
     version=$(mysql "${args[@]}" -N -s -e "SHOW VARIABLES LIKE 'version_comment';" 2>/dev/null | cut -f2- || true)
