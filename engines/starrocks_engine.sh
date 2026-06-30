@@ -147,7 +147,6 @@ engine_run_sql_file() {
 engine_run_sql() {
     local db="$1"
     local sql_statement="$2"
-    local capture_last_query_id="${3:-true}"
     local error_file=""
     local sql_file=""
     local status=0
@@ -165,14 +164,6 @@ engine_run_sql() {
     db="$(starrocks_qualified_db "$db")"
     [ -n "$db" ] && args+=(-D"$db")
 
-    local mysql_sql="$sql_statement"
-    if [[ "${profile:-}" == "true" && "$capture_last_query_id" == "true" ]]; then
-        local normalized_sql
-        normalized_sql=$(printf '%s' "$sql_statement" | sed -e ':trim' -e 's/[[:space:]]*$//' \
-            -e '/;$/ { s/;*$//; b trim; }')
-        mysql_sql="SET enable_profile = true; ${normalized_sql}; SELECT last_query_id();"
-    fi
-
     local last_query_id_file="${RESULT_DIR:-/tmp}/.last_query_id"
 
     # Execute the SQL statement
@@ -185,12 +176,26 @@ engine_run_sql() {
         rm -f "$error_file"
         return 1
     }
-    printf '%s\n' "$mysql_sql" > "$sql_file"
+    if [[ "${profile:-}" == "true" ]]; then
+        printf 'SET enable_profile = true;\n' > "$sql_file"
+    else
+        : > "$sql_file"
+    fi
+    printf '%s\n' "$sql_statement" >> "$sql_file"
+    local sql_tail="$sql_statement"
+    while :; do
+        case "$sql_tail" in
+            *[[:space:]]) sql_tail="${sql_tail%?}" ;;
+            *) break ;;
+        esac
+    done
+    case "$sql_tail" in
+        *";") printf 'SELECT last_query_id();\n' >> "$sql_file" ;;
+        *) printf ';\nSELECT last_query_id();\n' >> "$sql_file" ;;
+    esac
     if output=$(mysql "${args[@]}" --batch --skip-column-names < "$sql_file" 2>"$error_file"); then
         rm -f "$sql_file" "$error_file"
-        if [[ "${profile:-}" == "true" && "$capture_last_query_id" == "true" ]]; then
-            echo "$output" | sed '/^[[:space:]]*$/d' | tail -n 1 > "$last_query_id_file"
-        fi
+        echo "$output" | sed '/^[[:space:]]*$/d' | tail -n 1 > "$last_query_id_file"
         return 0
     else
         status=$?

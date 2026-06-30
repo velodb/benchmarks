@@ -325,7 +325,7 @@ run_session() {
     echo "Running set session."
     local session_content
     session_content=$(envsubst < "$session_file")
-    if ! engine_run_sql "" "$session_content" false; then
+    if ! engine_run_sql "" "$session_content"; then
         die "Setup session failed"
     fi
 }
