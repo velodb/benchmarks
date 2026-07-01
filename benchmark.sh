@@ -325,7 +325,7 @@ run_session() {
     echo "Running set session."
     local session_content
     session_content=$(envsubst < "$session_file")
-    if ! engine_run_sql "" "$session_content" false; then
+    if ! engine_run_sql "" "$session_content"; then
         die "Setup session failed"
     fi
 }
@@ -531,6 +531,7 @@ run_timed_query() {
 
     local start_time
     start_time=$(date +%s%3N)
+    sleep 1
     if engine_run_sql "${db}" "$sql_content"; then
         local end_time
         end_time=$(date +%s%3N)

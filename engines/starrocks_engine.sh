@@ -16,6 +16,28 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/interface.sh"
 
+starrocks_qualified_db() {
+    local db_name="$1"
+
+    if [ -n "${catalog:-}" ] && [ -n "$db_name" ] && [[ "$db_name" != *.* ]]; then
+        printf '%s.%s\n' "$catalog" "$db_name"
+    else
+        printf '%s\n' "$db_name"
+    fi
+}
+
+starrocks_qualified_table() {
+    local table_name="$1"
+    local db_name
+
+    db_name="$(starrocks_qualified_db "${db:-}")"
+    if [[ "$table_name" != *.* ]] && [ -n "$db_name" ]; then
+        printf '%s.%s\n' "$db_name" "$table_name"
+    else
+        printf '%s\n' "$table_name"
+    fi
+}
+
 # 1. Initialize and check StarRocks dependencies
 engine_init() {
     echo "Initializing StarRocks engine..."
@@ -93,6 +115,8 @@ init_mysql_jdbc_driver() {
 # 2. Execute a SQL file using mysql client
 engine_run_sql_file() {
     local sql_file="$1"
+    local apply_session="${2:-true}"
+    local db_name
     
     if [ ! -f "$sql_file" ]; then
         echo "ERROR: SQL file not found: $sql_file" >&2
@@ -101,14 +125,17 @@ engine_run_sql_file() {
     
     # Set password environment variable for mysql
     export MYSQL_PWD="${password:-}"
+    db_name="${db:-}"
+    # DDL setup passes apply_session=false and may create/drop the catalog itself,
+    # so do not select catalog.db before the catalog exists.
+    if [ "$apply_session" != "false" ]; then
+        db_name="$(starrocks_qualified_db "$db_name")"
+    fi
+    local args=(-h"$fe_host" -P"$fe_query_port" -u"$user")
+    [ -n "$db_name" ] && args+=(-D"$db_name")
     
     # Execute the SQL file
-    if mysql \
-        -h"$fe_host" \
-        -P"$fe_query_port" \
-        -u"$user" \
-        -D"$db" \
-        < "$sql_file"; then
+    if mysql "${args[@]}" < "$sql_file"; then
         return 0
     else
         echo "ERROR: Failed to execute SQL file: $sql_file" >&2
@@ -120,7 +147,9 @@ engine_run_sql_file() {
 engine_run_sql() {
     local db="$1"
     local sql_statement="$2"
-    local capture_last_query_id="${3:-true}"
+    local error_file=""
+    local sql_file=""
+    local status=0
     
     if [ -z "$sql_statement" ]; then
         echo "ERROR: SQL statement cannot be empty" >&2
@@ -132,28 +161,50 @@ engine_run_sql() {
 
     # Build mysql command arguments
     local args=(-h"$fe_host" -P"$fe_query_port" -u"$user")
+    db="$(starrocks_qualified_db "$db")"
     [ -n "$db" ] && args+=(-D"$db")
-
-    local mysql_sql="$sql_statement"
-    if [[ "${profile:-}" == "true" && "$capture_last_query_id" == "true" ]]; then
-        local normalized_sql
-        normalized_sql=$(printf '%s' "$sql_statement" | sed -e ':trim' -e 's/[[:space:]]*$//' \
-            -e '/;$/ { s/;*$//; b trim; }')
-        mysql_sql="SET enable_profile = true; ${normalized_sql}; SELECT last_query_id();"
-    fi
 
     local last_query_id_file="${RESULT_DIR:-/tmp}/.last_query_id"
 
     # Execute the SQL statement
-    if output=$(mysql "${args[@]}" --batch --skip-column-names -e "$mysql_sql" 2>&1); then
-        if [[ "${profile:-}" == "true" && "$capture_last_query_id" == "true" ]]; then
-            echo "$output" | sed '/^[[:space:]]*$/d' | tail -n 1 > "$last_query_id_file"
-        fi
+    error_file="$(mktemp "${TMPDIR:-/tmp}/starrocks_mysql_stderr.XXXXXX")" || {
+        echo "ERROR: Failed to create temporary stderr file" >&2
+        return 1
+    }
+    sql_file="$(mktemp "${TMPDIR:-/tmp}/starrocks_mysql_sql.XXXXXX")" || {
+        echo "ERROR: Failed to create temporary SQL file" >&2
+        rm -f "$error_file"
+        return 1
+    }
+    if [[ "${profile:-}" == "true" ]]; then
+        printf 'SET enable_profile = true;\n' > "$sql_file"
+    else
+        : > "$sql_file"
+    fi
+    printf '%s\n' "$sql_statement" >> "$sql_file"
+    local sql_tail="$sql_statement"
+    while :; do
+        case "$sql_tail" in
+            *[[:space:]]) sql_tail="${sql_tail%?}" ;;
+            *) break ;;
+        esac
+    done
+    case "$sql_tail" in
+        *";") printf 'SELECT last_query_id();\n' >> "$sql_file" ;;
+        *) printf ';\nSELECT last_query_id();\n' >> "$sql_file" ;;
+    esac
+    if output=$(mysql "${args[@]}" --batch --skip-column-names < "$sql_file" 2>"$error_file"); then
+        rm -f "$sql_file" "$error_file"
+        echo "$output" | sed '/^[[:space:]]*$/d' | tail -n 1 > "$last_query_id_file"
         return 0
     else
+        status=$?
         echo "ERROR: Failed to execute SQL statement: $sql_statement" >&2
-        echo "$output" >&2
-        return 1
+        if [ -s "$error_file" ]; then
+            cat "$error_file" >&2
+        fi
+        rm -f "$error_file" "$sql_file"
+        return "$status"
     fi
 }
 
@@ -164,10 +215,14 @@ engine_get_table_rows() {
     local port="${fe_query_port:-9030}"
     local sys_user="${user:-root}"
     local current_db="${db:-}"
+    local qualified_table
+
+    current_db="$(starrocks_qualified_db "$current_db")"
+    qualified_table="$(starrocks_qualified_table "$table")"
 
     local count
     count="$(MYSQL_PWD="${password:-}" mysql -h"${host}" -P"${port}" -u"${sys_user}" -D"${current_db}" \
-        -N -s -e "SELECT COUNT(*) FROM ${table};" 2>/dev/null || true)"
+        -N -s -e "SELECT COUNT(*) FROM ${qualified_table};" 2>/dev/null || true)"
     count="${count%%$'\n'*}"
     count="${count//$'\r'/}"
 
@@ -216,6 +271,8 @@ engine_set_auto_analyze() {
 
 engine_list_tables() {
     local db_name="$1"
+    db_name="$(starrocks_qualified_db "$db_name")"
+
     export MYSQL_PWD="${password:-}"
     mysql -h"$fe_host" -P"$fe_query_port" -u"$user" -D"$db_name" -N -s -e "SHOW TABLES;" 2>/dev/null
 }
@@ -223,6 +280,8 @@ engine_list_tables() {
 engine_drop_stats() {
     local db_name="$1"
     local table="$2"
+    db_name="$(starrocks_qualified_db "$db_name")"
+
     export MYSQL_PWD="${password:-}"
     mysql -h"$fe_host" -P"$fe_query_port" -u"$user" -D"$db_name" -e "DROP STATS ${table};" >/dev/null 2>&1
 }
@@ -232,6 +291,8 @@ engine_analyze_table() {
     local table="$2"
     local analyze_type="$3"
     local sql=""
+
+    db_name="$(starrocks_qualified_db "$db_name")"
 
     case "${analyze_type}" in
         analyze_full)
@@ -301,6 +362,7 @@ engine_get_plan() {
     local sql_statement="$2"
     export MYSQL_PWD="${password:-}"
     local args=(-h"$fe_host" -P"$fe_query_port" -u"$user" -N -s)
+    db_name="$(starrocks_qualified_db "$db_name")"
     [ -n "$db_name" ] && args+=(-D"$db_name")
     mysql "${args[@]}" -e "EXPLAIN VERBOSE ${sql_statement}" 2>/dev/null || true
 }
@@ -309,7 +371,9 @@ engine_get_plan() {
 engine_get_jdbc_datasource() {
     # Escape any special characters in the password
     local escaped_password
+    local jdbc_db
     escaped_password=$(xml_escape "${password:-}")
+    jdbc_db="$(starrocks_qualified_db "${db:-}")"
     
     cat << EOF
 <JDBCDataSource guiclass="TestBeanGUI" testclass="JDBCDataSource" testname="JDBC Connection Configuration" enabled="true">
@@ -318,7 +382,7 @@ engine_get_jdbc_datasource() {
   <stringProp name="connectionAge">5000</stringProp>
   <stringProp name="connectionProperties"></stringProp>
   <stringProp name="dataSource">Starrocks</stringProp>
-  <stringProp name="dbUrl">jdbc:mysql://${fe_host}:${fe_query_port}/${db}</stringProp>
+  <stringProp name="dbUrl">jdbc:mysql://${fe_host}:${fe_query_port}/${jdbc_db}</stringProp>
   <stringProp name="driver">com.mysql.cj.jdbc.Driver</stringProp>
   <stringProp name="keepAlive">true</stringProp>
   <stringProp name="password">${escaped_password}</stringProp>
@@ -340,7 +404,9 @@ engine_get_jdbc_sampler_name() {
 engine_get_version() {
     export MYSQL_PWD="${password:-}"
     local args=(-h"$fe_host" -P"$fe_query_port" -u"$user")
-    [ -n "${db:-}" ] && args+=(-D"$db")
+    local db_name
+    db_name="$(starrocks_qualified_db "${db:-}")"
+    [ -n "$db_name" ] && args+=(-D"$db_name")
 
     local version
     version=$(mysql "${args[@]}" -N -s -e "SHOW VARIABLES LIKE 'version_comment';" 2>/dev/null | cut -f2- || true)

@@ -47,7 +47,6 @@ engine_run_sql_file() {
 #    
 #    @param $1: Database name
 #    @param $2: SQL statement to execute
-#    @param $3: Optional. Whether to apply session SQL first (default: true)
 #    @return: 0 on success, non-zero on failure
 engine_run_sql() {
     local db="$1"
