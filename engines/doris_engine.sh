@@ -27,8 +27,7 @@ any_clear_cache_enabled() {
 }
 
 should_configure_doris_page_cache() {
-    [[ "${disable_doris_page_cache:-false}" == "true" \
-    || "${disable_doris_page_cache:-false}" == "false" ]]
+    [[ -n "${disable_doris_page_cache:-}" ]]
 }
 
 parse_be_hosts() {
