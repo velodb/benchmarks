@@ -1,3 +1,11 @@
+DROP CATALOG IF EXISTS `tpcds`;
+
+CREATE CATALOG IF NOT EXISTS `tpcds` PROPERTIES(
+    "type" = "trino-connector",
+    "trino.connector.name" = "tpcds",
+    "trino.tpcds.split-count" = "128"
+);
+
 create table call_center
 (
     cc_call_center_sk         integer               not null,

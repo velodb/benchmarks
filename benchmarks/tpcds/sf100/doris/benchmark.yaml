@@ -30,7 +30,7 @@ paths:
   ddl: "ddl/ddl.sql" # DDL setup file
   session_file: "${SESSION_FILE:-session/session.sql}" # Session setup file
   analyze_file: "${ANALYZE_FILE:-analyze/analyze.sql}" # Analyze statistics file
-  load_dir: "load/load_s3/" # Directory containing data loading scripts (local Stream Load)
+  load_dir: "${LOAD_DIR:-load/insert_into_trino/}" # Directory containing data loading SQL files
   query_dir: "${QUERY_DIR:-query/}" # Directory containing query SQL files
   query_mode: "file" # Query file format: "line" (each line is a query) or "file" (entire file is one query)
 storage:
@@ -39,3 +39,28 @@ storage:
   bucket: "${STORAGE_BUCKET:-bench-dataset}"
   access_key: "${STORAGE_ACCESS_KEY:-xxx}"
   secret_key: "${STORAGE_SECRET_KEY:-xxx}"
+tables:
+  customer_demographics: 1920800
+  reason: 55
+  warehouse: 15
+  date_dim: 73049
+  catalog_sales: 143997065
+  call_center: 30
+  inventory: 399330000
+  catalog_returns: 14404374
+  household_demographics: 7200
+  customer_address: 1000000
+  income_band: 20
+  catalog_page: 20400
+  item: 204000
+  web_returns: 7197670
+  web_site: 24
+  promotion: 1000
+  web_sales: 72001237
+  store: 402
+  web_page: 2040
+  time_dim: 86400
+  store_returns: 28795080
+  store_sales: 287997024
+  ship_mode: 20
+  customer: 2000000
