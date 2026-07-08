@@ -563,6 +563,23 @@ min_query_duration() {
     printf '%s' "$min"
 }
 
+collect_query_analyze_plan() {
+    local query_name="$1"
+    local safe_query_name="$2"
+    local sql_content="$3"
+    local plan_dir="$4"
+    local analyze_plan_content
+    local analyze_plan_sql
+
+    analyze_plan_sql=$(printf '%s' "$sql_content" | sed -e '/^[[:space:]]*--/d' -e '/^[[:space:]]*#/d')
+    analyze_plan_content=$(engine_get_analyze_plan "${db}" "$analyze_plan_sql" 2>/dev/null || true)
+    if [ -n "$analyze_plan_content" ]; then
+        printf "%s\n" "$analyze_plan_content" > "$plan_dir/${safe_query_name}_analyze_plan.txt"
+    else
+        echo "Analyze plan collection returned empty for ${query_name}" >&2
+    fi
+}
+
 # Run benchmark queries
 run_query() {
     local query_dir="${QUERY_DIR:-query/}"
@@ -650,7 +667,11 @@ run_query() {
     local query_detail_csv="$RESULT_DIR/query_detail.csv"
     local plan_dir=""
     local profile_dir=""
-    if [[ "$plan" == "true" ]]; then
+    local collect_analyze_plan="false"
+    if [[ "${ENGINE_TYPE,,}" == "starrocks" ]]; then
+        collect_analyze_plan="true"
+    fi
+    if [[ "$plan" == "true" || "$collect_analyze_plan" == "true" ]]; then
         plan_dir="$RESULT_DIR/plan"
         mkdir -p "$plan_dir"
     fi
@@ -742,6 +763,10 @@ run_query() {
                 detail_result+=",$RUN_QUERY_DURATION"
             done
 
+            if [[ "$collect_analyze_plan" == "true" ]]; then
+                collect_query_analyze_plan "$query_name" "$safe_query_name" "$sql_content" "$plan_dir"
+            fi
+
             local hot_min="null"
             if (( hot_query_count > 0 )); then
                 hot_min=$(min_query_duration "${hot_values[@]}")
@@ -769,6 +794,9 @@ run_query() {
                 run_timed_query "$query_name" "$safe_query_name" "$t" "$sql_content"
                 times_result+=",$RUN_QUERY_DURATION"
             done
+            if [[ "$collect_analyze_plan" == "true" ]]; then
+                collect_query_analyze_plan "$query_name" "$safe_query_name" "$sql_content" "$plan_dir"
+            fi
             echo "$times_result" >> "$query_csv"
         fi
     done

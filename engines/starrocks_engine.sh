@@ -305,6 +305,16 @@ engine_get_plan() {
     mysql "${args[@]}" -e "EXPLAIN VERBOSE ${sql_statement}" 2>/dev/null || true
 }
 
+# Optional: fetch EXPLAIN ANALYZE output for a query.
+engine_get_analyze_plan() {
+    local db_name="$1"
+    local sql_statement="$2"
+    export MYSQL_PWD="${password:-}"
+    local args=(-h"$fe_host" -P"$fe_query_port" -u"$user" --batch --raw --skip-column-names)
+    [ -n "$db_name" ] && args+=(-D"$db_name")
+    mysql "${args[@]}" -e "EXPLAIN ANALYZE ${sql_statement}" 2>/dev/null || true
+}
+
 # 3. Generate JDBC DataSource XML configuration for Starrocks
 engine_get_jdbc_datasource() {
     # Escape any special characters in the password

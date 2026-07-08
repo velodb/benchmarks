@@ -182,6 +182,12 @@ engine_get_plan() {
     return 1
 }
 
+# - engine_get_analyze_plan(db, sql): print execution plan with runtime stats
+engine_get_analyze_plan() {
+    echo "Analyze plan collection not supported by this engine, skipping..." >&2
+    return 1
+}
+
 engine_get_session_sql_content() {
     local apply_session="${1:-true}"
     local session_file="${SESSION_FILE:-session/session.sql}"
