@@ -531,7 +531,6 @@ run_timed_query() {
 
     local start_time
     start_time=$(date +%s%3N)
-    sleep 1
     if engine_run_sql "${db}" "$sql_content"; then
         local end_time
         end_time=$(date +%s%3N)
