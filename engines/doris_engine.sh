@@ -24,6 +24,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/http_utils.sh"
 
 BE_HOSTS_ARR=()
 
+doris_to_lower() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
 doris_qualified_db() {
     local db_name="$1"
 
@@ -172,7 +176,7 @@ engine_init() {
     fi
     
     local sys_cache_method="${clear_sys_page_cache_method:-ssh}"
-    sys_cache_method="${sys_cache_method,,}"
+    sys_cache_method="$(doris_to_lower "$sys_cache_method")"
 
     if [[ "${clear_file_cache:-false}" == "true" ]] \
         || should_configure_doris_page_cache \
@@ -509,7 +513,7 @@ clear_system_page_cache_by_http() {
 #   GET http://<be>:8050/drop_sys_cache
 clear_system_page_cache() {
     local method="${clear_sys_page_cache_method:-ssh}"
-    method="${method,,}"
+    method="$(doris_to_lower "$method")"
 
     case "$method" in
         ssh)
@@ -555,7 +559,7 @@ configure_doris_page_cache() {
     local desired="${disable_doris_page_cache:-false}"
     local be
 
-    desired="${desired,,}"
+    desired="$(doris_to_lower "$desired")"
     if [[ "$desired" != "true" ]]; then
         desired="false"
     fi
@@ -576,8 +580,8 @@ configure_doris_page_cache() {
         fi
 
         IFS=$'\t' read -r current mutable <<< "$parsed"
-        current="${current,,}"
-        mutable="${mutable,,}"
+        current="$(doris_to_lower "$current")"
+        mutable="$(doris_to_lower "$mutable")"
         if [[ "$current" != "true" && "$current" != "false" ]]; then
             echo "invalid disable_storage_page_cache value on ${be}: ${current}" >&2
             return 1

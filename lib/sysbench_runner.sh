@@ -1,12 +1,28 @@
 #!/bin/bash
 
+sysbench_to_lower() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
 get_sysbench_config() {
     local key="$1"
     local default_value="$2"
     local raw_value
+    local value
 
-    raw_value=$(yq eval ".sysbench.${key} // \"${default_value}\" | tostring" "$CONFIG_FILE")
-    eval "printf '%s' \"$raw_value\""
+    local env_var
+    env_var="SYSBENCH_$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')"
+    if [ "$key" = "enabled" ]; then
+        env_var="SYSBENCH"
+    fi
+
+    raw_value=$(yq eval ".sysbench.${key} // \"\" | tostring" "$CONFIG_FILE")
+    if [ -n "$raw_value" ]; then
+        value="$raw_value"
+    else
+        value="${!env_var:-$default_value}"
+    fi
+    eval "printf '%s' \"$value\""
 }
 
 resolve_sysbench_test() {
@@ -122,7 +138,7 @@ execute_sysbench_task() {
 
     local enabled
     enabled="$(get_sysbench_config enabled false)"
-    if [[ "${enabled,,}" != "true" ]]; then
+    if [[ "$(sysbench_to_lower "$enabled")" != "true" ]]; then
         echo "Sysbench not enabled, skipping."
         return 0
     fi
@@ -139,6 +155,7 @@ execute_sysbench_task() {
     local threads
     local time_s
     local report_interval
+    local run_prepare
     local run_benchmark
     local run_cleanup
     local query_enabled
@@ -149,6 +166,7 @@ execute_sysbench_task() {
     threads="$(get_sysbench_config threads 32)"
     time_s="$(get_sysbench_config time 20)"
     report_interval="$(get_sysbench_config report_interval 1)"
+    run_prepare="$(get_sysbench_config prepare false)"
     run_benchmark="$(get_sysbench_config run true)"
     run_cleanup="$(get_sysbench_config cleanup false)"
     query_enabled="${query:-false}"
@@ -156,7 +174,7 @@ execute_sysbench_task() {
     echo "  Running test: $test_name"
     ensure_sysbench_database
 
-    if [[ "${query_enabled,,}" != "true" ]]; then
+    if [[ "$(sysbench_to_lower "$query_enabled")" != "true" ]]; then
         echo "  Sysbench query phase disabled, skipping run."
         run_benchmark="false"
     fi
@@ -177,7 +195,12 @@ execute_sysbench_task() {
         common_args+=("--mysql-password=$password")
     fi
 
-    if [[ "${run_benchmark,,}" == "true" ]]; then
+    if [[ "$(sysbench_to_lower "$run_prepare")" == "true" ]]; then
+        echo "  [Sysbench] prepare phase..."
+        "$sysbench_cmd" "$test_name" "${common_args[@]}" prepare
+    fi
+
+    if [[ "$(sysbench_to_lower "$run_benchmark")" == "true" ]]; then
         local log_file="$RESULT_DIR/sysbench.log"
         echo "  [Sysbench] run phase..."
         if ! "$sysbench_cmd" "$test_name" "${common_args[@]}"             "--time=${time_s}"             "--report-interval=${report_interval}"             run 2>&1 | tee "$log_file"; then
@@ -193,7 +216,7 @@ execute_sysbench_task() {
         fi
     fi
 
-    if [[ "${run_cleanup,,}" == "true" ]]; then
+    if [[ "$(sysbench_to_lower "$run_cleanup")" == "true" ]]; then
         echo "  [Sysbench] cleanup phase..."
         "$sysbench_cmd" "$test_name" "${common_args[@]}" cleanup
     fi

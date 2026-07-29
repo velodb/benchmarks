@@ -64,18 +64,30 @@ execute_vectordbbench_task() {
     fi
 
     # 2. Extract and expand configurations from YAML using yq
-    local case_type=$(eval echo $(yq eval '.vectordbbench.case.type' "$CONFIG_FILE"))
-    local task_label=$(eval echo $(yq eval '.vectordbbench.case.task_label' "$CONFIG_FILE"))
-    local db_label=$(eval echo $(yq eval '.vectordbbench.case.db_label' "$CONFIG_FILE"))
-    local concurrency=$(eval echo $(yq eval '.vectordbbench.test.concurrency' "$CONFIG_FILE"))
-    local num_per_batch=$(eval echo $(yq eval '.vectordbbench.test.num_per_batch' "$CONFIG_FILE"))
-    local batch_size=$(eval echo $(yq eval '.vectordbbench.test.stream_load_rows_per_batch // .vectordbbench.test.rows_per_batch // "100000"' "$CONFIG_FILE"))
-    local index_prop=$(eval echo $(yq eval '.vectordbbench.index.properties' "$CONFIG_FILE"))
-    local session_var=$(eval echo $(yq eval '.vectordbbench.index.session_vars' "$CONFIG_FILE"))
+    local case_type=$(eval echo "$(yq eval '.vectordbbench.case.type // ""' "$CONFIG_FILE")")
+    local task_label=$(eval echo "$(yq eval '.vectordbbench.case.task_label // ""' "$CONFIG_FILE")")
+    local db_label=$(eval echo "$(yq eval '.vectordbbench.case.db_label // ""' "$CONFIG_FILE")")
+    local concurrency=$(eval echo "$(yq eval '.vectordbbench.test.concurrency // ""' "$CONFIG_FILE")")
+    local num_per_batch=$(eval echo "$(yq eval '.vectordbbench.test.num_per_batch // ""' "$CONFIG_FILE")")
+    local batch_size=$(eval echo "$(yq eval '.vectordbbench.test.stream_load_rows_per_batch // .vectordbbench.test.rows_per_batch // ""' "$CONFIG_FILE")")
+    local index_prop=$(eval echo "$(yq eval '.vectordbbench.index.properties // ""' "$CONFIG_FILE")")
+    local session_var=$(eval echo "$(yq eval '.vectordbbench.index.session_vars // ""' "$CONFIG_FILE")")
     
-    local dataset_source=$(eval echo $(yq eval '.vectordbbench.storage.dataset_source' "$CONFIG_FILE"))
-    local dataset_dir=$(eval echo $(yq eval '.vectordbbench.storage.dataset_local_dir' "$CONFIG_FILE"))
-    local result_dir=$(eval echo $(yq eval '.vectordbbench.storage.results_local_dir' "$CONFIG_FILE"))
+    local dataset_source=$(eval echo "$(yq eval '.vectordbbench.storage.dataset_source // ""' "$CONFIG_FILE")")
+    local dataset_dir=$(eval echo "$(yq eval '.vectordbbench.storage.dataset_local_dir // ""' "$CONFIG_FILE")")
+    local result_dir=$(eval echo "$(yq eval '.vectordbbench.storage.results_local_dir // ""' "$CONFIG_FILE")")
+
+    case_type="${case_type:-${CASE_TYPE:-Performance768D1M}}"
+    task_label="${task_label:-${TASK_LABEL:-doris-1M-upload-and-search}}"
+    db_label="${db_label:-${DB_LABEL:-16c64g}}"
+    concurrency="${concurrency:-${CONCURRENCY:-1,60,90}}"
+    num_per_batch="${num_per_batch:-${NUM_PER_BATCH:-500000}}"
+    batch_size="${batch_size:-${STREAM_LOAD_ROWS_PER_BATCH:-500000}}"
+    index_prop="${index_prop:-${INDEX_PROP:-max_degree=128,ef_construction=256}}"
+    session_var="${session_var:-${SESSION_VAR:-hnsw_ef_search=100}}"
+    dataset_source="${dataset_source:-${DATASET_SOURCE:-AliyunOSS}}"
+    dataset_dir="${dataset_dir:-${DATASET_LOCAL_DIR:-data/vectordbbench_data}}"
+    result_dir="${result_dir:-${RESULTS_LOCAL_DIR:-results/vector}}"
 
     # Normalize relative paths to absolute (anchored to base_dir)
     [[ "$dataset_dir" != /* ]] && dataset_dir="$base_dir/$dataset_dir"
@@ -103,23 +115,26 @@ execute_vectordbbench_task() {
     echo "  Results: $result_dir"
 
     # 6. Assemble and Execute Command
-    local cmd="$vdb_cmd doris \
-        --case-type=$case_type \
-        --task-label=$task_label \
-        --db-label=standard \
-        --host=$fe_host \
-        --port=$fe_query_port \
-        --http-port=$fe_http_port \
-        --username=$user \
-        --password=$password \
-        --db-name=$db \
-        --num-concurrency=$concurrency \
-        --stream-load-rows-per-batch=$batch_size \
-        --index-prop=$index_prop \
-        --session-var=$session_var"
+    local -a cmd=(
+        "$vdb_cmd"
+        "doris"
+        "--case-type=$case_type"
+        "--task-label=$task_label"
+        "--db-label=$db_label"
+        "--host=$fe_host"
+        "--port=$fe_query_port"
+        "--http-port=$fe_http_port"
+        "--username=$user"
+        "--password=$password"
+        "--db-name=$db"
+        "--num-concurrency=$concurrency"
+        "--stream-load-rows-per-batch=$batch_size"
+        "--index-prop=$index_prop"
+        "--session-var=$session_var"
+    )
 
-    echo "  Executing: $cmd"
-    if eval "$cmd"; then
+    echo "  Executing: ${cmd[*]}"
+    if "${cmd[@]}"; then
         echo "  VectorDBBench command finished. Validating results..."
         
         # Find the latest JSON result for this task in the specified results directory

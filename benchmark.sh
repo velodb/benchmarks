@@ -57,8 +57,24 @@ die() {
     exit 1
 }
 
+to_lower() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+normalize_bool() {
+    if [[ "$(to_lower "${1:-}")" == "true" ]]; then
+        printf '%s' "true"
+    else
+        printf '%s' "false"
+    fi
+}
+
 is_sysbench_enabled() {
-    [[ "$(yq eval '.sysbench.enabled // "false"' "$CONFIG_FILE")" == "true" ]]
+    local enabled
+    enabled="$(yq eval '.sysbench.enabled // ""' "$CONFIG_FILE")"
+    enabled="$(eval echo "$enabled")"
+    enabled="${enabled:-${SYSBENCH:-false}}"
+    [[ "$(to_lower "$enabled")" == "true" ]]
 }
 
 # Check dependencies
@@ -83,7 +99,7 @@ check_dependencies() {
         init_jmeter_tools
     fi
 
-    if [[ "${vectordbbench,,}" == "true" ]] && ! init_vectordbbench; then
+    if [[ "$(to_lower "${vectordbbench:-}")" == "true" ]] && ! init_vectordbbench; then
         die "Failed to initialize VectorDBBench"
     fi
 
@@ -236,11 +252,11 @@ load_storage_config() {
     raw_secret_key=$(yq eval '.storage.secret_key // ""' "$CONFIG_FILE")
 
     # Expand environment variables (e.g., ${STORAGE_ENDPOINT:-https://...})
-    export STORAGE_ENDPOINT=$(eval echo "$raw_endpoint")
-    export STORAGE_REGION=$(eval echo "$raw_region")
-    export STORAGE_BUCKET=$(eval echo "$raw_bucket")
-    export STORAGE_ACCESS_KEY=$(eval echo "$raw_access_key")
-    export STORAGE_SECRET_KEY=$(eval echo "$raw_secret_key")
+    export STORAGE_ENDPOINT="$(eval echo "${raw_endpoint:-${STORAGE_ENDPOINT:-}}")"
+    export STORAGE_REGION="$(eval echo "${raw_region:-${STORAGE_REGION:-}}")"
+    export STORAGE_BUCKET="$(eval echo "${raw_bucket:-${STORAGE_BUCKET:-}}")"
+    export STORAGE_ACCESS_KEY="$(eval echo "${raw_access_key:-${STORAGE_ACCESS_KEY:-}}")"
+    export STORAGE_SECRET_KEY="$(eval echo "${raw_secret_key:-${STORAGE_SECRET_KEY:-}}")"
 
     echo "Storage: endpoint=$STORAGE_ENDPOINT bucket=$STORAGE_BUCKET"
 }
@@ -668,7 +684,7 @@ run_query() {
     local plan_dir=""
     local profile_dir=""
     local collect_analyze_plan="false"
-    if [[ "${ENGINE_TYPE,,}" == "starrocks" ]]; then
+    if [[ "$(to_lower "${ENGINE_TYPE:-}")" == "starrocks" ]]; then
         collect_analyze_plan="true"
     fi
     if [[ "$plan" == "true" || "$collect_analyze_plan" == "true" ]]; then
@@ -923,7 +939,11 @@ run_builtin_analyze() {
         return 1
     fi
 
-    mapfile -t tables < <(printf '%s\n' "$tables_output" | awk 'NF > 0')
+    local -a tables=()
+    local table_entry
+    while IFS= read -r table_entry; do
+        [ -n "$table_entry" ] && tables+=("$table_entry")
+    done < <(printf '%s\n' "$tables_output" | awk 'NF > 0')
 
     # Normalize analyze_type to lowercase for robust matching
     analyze_type="$(echo "${analyze_type:-${ANALYZE_TYPE:-analyze_full}}" | tr '[:upper:]' '[:lower:]')"
@@ -1109,22 +1129,47 @@ main() {
     # Load configuration (to get jmeter flag early)
     load_config
     load_storage_config
-    jmeter="${jmeter:-false}"
-    vectordbbench="${vectordbbench:-false}"
+    jmeter="${jmeter:-${JMETER:-false}}"
+    vectordbbench="${vectordbbench:-${VECTORDBBENCH:-false}}"
+    jmeter="$(normalize_bool "$jmeter")"
+    vectordbbench="$(normalize_bool "$vectordbbench")"
     
     # Check framework dependencies (now that jmeter flag is known)
     check_dependencies
     
     # Load other parameters
-    session="${session:-true}"
-    load="${load:-false}"
-    analyze="${analyze:-false}"
+    fe_host="${fe_host:-${FE_HOST:-}}"
+    fe_http_port="${fe_http_port:-${FE_HTTP_PORT:-8030}}"
+    fe_query_port="${fe_query_port:-${FE_QUERY_PORT:-9030}}"
+    clickhouse_host="${clickhouse_host:-${CLICKHOUSE_HOST:-${FE_HOST:-}}}"
+    case "$(to_lower "${ENGINE_TYPE:-}")" in
+        clickhouse*)
+            user="${user:-${DB_USER:-default}}"
+            ;;
+        redshift)
+            user="${user:-${DB_USER:-awsuser}}"
+            ;;
+        trino*)
+            user="${user:-${DB_USER:-trino}}"
+            ;;
+        *)
+            user="${user:-${DB_USER:-root}}"
+            ;;
+    esac
+    password="${password:-${PASSWORD:-}}"
+    db="${db:-${DB:-}}"
+    session="${session:-${SESSION:-true}}"
+    load="${load:-${LOAD:-false}}"
+    analyze="${analyze:-${ANALYZE:-false}}"
     analyze_type="${analyze_type:-${ANALYZE_TYPE:-analyze_full}}"
-    query="${query:-false}"
-    query_times="${query_times:-1}"
+    query="${query:-${QUERY:-false}}"
+    query_times="${query_times:-${QUERY_TIMES:-1}}"
+    threads="${threads:-${JMETER_THREADS:-50}}"
+    loops="${loops:-${JMETER_LOOPS:-1}}"
+    duration="${duration:-${JMETER_DURATION:-180}}"
+    query_by_query="${query_by_query:-${QUERY_BY_QUERY:-true}}"
     cold_query_count="${cold_query_count:-${COLD_QUERY_COUNT:-0}}"
     hot_query_count="${hot_query_count:-${HOT_QUERY_COUNT:-0}}"
-    db="${db:-}"
     drop_database="${drop_database:-${DROP_DATABASE:-false}}"
     clean_trash="${clean_trash:-${CLEAN_TRASH:-false}}"
     profile="${profile:-${PROFILE:-false}}"
@@ -1144,18 +1189,14 @@ main() {
     clear_sys_page_cache_http_path="${clear_sys_page_cache_http_path:-${CLEAR_SYS_PAGE_CACHE_HTTP_PATH:-/drop_sys_cache}}"
     clear_cache_ssh_user="${clear_cache_ssh_user:-${CLEAR_CACHE_SSH_USER:-root}}"
 
-    if [[ "${drop_database,,}" != "true" ]]; then
-        drop_database="false"
-    fi
-    if [[ "${clean_trash,,}" != "true" ]]; then
-        clean_trash="false"
-    fi
-    if [[ "${profile,,}" != "true" ]]; then
-        profile="false"
-    fi
-    if [[ "${plan,,}" != "true" ]]; then
-        plan="false"
-    fi
+    session="$(normalize_bool "$session")"
+    load="$(normalize_bool "$load")"
+    analyze="$(normalize_bool "$analyze")"
+    query="$(normalize_bool "$query")"
+    drop_database="$(normalize_bool "$drop_database")"
+    clean_trash="$(normalize_bool "$clean_trash")"
+    profile="$(normalize_bool "$profile")"
+    plan="$(normalize_bool "$plan")"
     if ! [[ "$cold_query_count" =~ ^[0-9]+$ ]]; then
         die "Invalid cold_query_count: ${cold_query_count}"
     fi
@@ -1163,14 +1204,10 @@ main() {
         die "Invalid hot_query_count: ${hot_query_count}"
     fi
 
-    clear_cache_scope="${clear_cache_scope,,}"
-    clear_sys_page_cache_method="${clear_sys_page_cache_method,,}"
-    if [[ "${clear_file_cache,,}" == "true" ]]; then
-        clear_file_cache="true"
-    else
-        clear_file_cache="false"
-    fi
-    case "${doris_page_cache_action,,}" in
+    clear_cache_scope="$(to_lower "$clear_cache_scope")"
+    clear_sys_page_cache_method="$(to_lower "$clear_sys_page_cache_method")"
+    clear_file_cache="$(normalize_bool "$clear_file_cache")"
+    case "$(to_lower "$doris_page_cache_action")" in
         ""|unchanged|keep|skip|none)
             doris_page_cache_action="unchanged"
             ;;
@@ -1181,7 +1218,7 @@ main() {
             die "Invalid doris_page_cache_action: ${doris_page_cache_action} (allowed: unchanged, configure)"
             ;;
     esac
-    case "${disable_doris_page_cache,,}" in
+    case "$(to_lower "$disable_doris_page_cache")" in
         true)
             if [[ "$doris_page_cache_action" == "unchanged" ]]; then
                 doris_page_cache_action="configure"
@@ -1202,9 +1239,9 @@ main() {
     esac
     case "$doris_page_cache_action" in
         configure)
-            case "${disable_doris_page_cache,,}" in
+            case "$(to_lower "$disable_doris_page_cache")" in
                 true|false)
-                    disable_doris_page_cache="${disable_doris_page_cache,,}"
+                    disable_doris_page_cache="$(to_lower "$disable_doris_page_cache")"
                     ;;
                 "")
                     disable_doris_page_cache="false"
@@ -1218,11 +1255,7 @@ main() {
             disable_doris_page_cache=""
             ;;
     esac
-    if [[ "${clear_sys_page_cache,,}" == "true" ]]; then
-        clear_sys_page_cache="true"
-    else
-        clear_sys_page_cache="false"
-    fi
+    clear_sys_page_cache="$(normalize_bool "$clear_sys_page_cache")"
 
     if ! [[ "$be_http_port" =~ ^[0-9]+$ ]]; then
         die "Invalid be_http_port: ${be_http_port}"
