@@ -29,6 +29,7 @@ create_temp_sql_file() {
 }
 
 # Load modular components
+source "$SCRIPT_DIR/lib/common_utils.sh"
 source "$SCRIPT_DIR/lib/tools_utils.sh"
 source "$SCRIPT_DIR/lib/jmx_generator.sh"
 source "$SCRIPT_DIR/lib/result.sh"
@@ -55,18 +56,6 @@ EOF
 die() {
     echo "ERROR: $1" >&2
     exit 1
-}
-
-to_lower() {
-    printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
-}
-
-normalize_bool() {
-    if [[ "$(to_lower "${1:-}")" == "true" ]]; then
-        printf '%s' "true"
-    else
-        printf '%s' "false"
-    fi
 }
 
 is_sysbench_enabled() {
@@ -924,7 +913,7 @@ run_builtin_analyze() {
     fi
 
     local engine_type_lower
-    engine_type_lower="$(echo "${ENGINE_TYPE:-}" | tr '[:upper:]' '[:lower:]')"
+    engine_type_lower="$(to_lower "${ENGINE_TYPE:-}")"
     if [[ "$engine_type_lower" != "doris" && "$engine_type_lower" != "starrocks" ]]; then
         echo "Built-in analyze is supported only for doris/starrocks, current engine: ${ENGINE_TYPE}" >&2
         return 2
@@ -946,7 +935,7 @@ run_builtin_analyze() {
     done < <(printf '%s\n' "$tables_output" | awk 'NF > 0')
 
     # Normalize analyze_type to lowercase for robust matching
-    analyze_type="$(echo "${analyze_type:-${ANALYZE_TYPE:-analyze_full}}" | tr '[:upper:]' '[:lower:]')"
+    analyze_type="$(to_lower "${analyze_type:-${ANALYZE_TYPE:-analyze_full}}")"
     local analyze_csv="$RESULT_DIR/analyze.csv"
 
     echo "Running built-in analysis (type: ${analyze_type})..."
