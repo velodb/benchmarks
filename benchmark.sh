@@ -982,12 +982,17 @@ run_builtin_analyze() {
 
                 local analyze_output
                 if ! analyze_output=$(engine_analyze_table "$target_db" "$table" "$analyze_type" 2>&1); then
+                    if [ -n "$analyze_output" ]; then
+                        printf "%s\n" "$analyze_output" >&2
+                    fi
                     if [[ "$analyze_output" == *"Analyze view is not allowed"* ]]; then
                         echo "Skip analyze view entry: ${table}"
                         continue
                     fi
-                    echo "$analyze_output" >&2
                     return 1
+                fi
+                if [ -n "$analyze_output" ]; then
+                    printf "%s\n" "$analyze_output"
                 fi
 
                 end_time=$(date +%s%3N)
