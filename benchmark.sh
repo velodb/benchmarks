@@ -180,6 +180,11 @@ initialize_test() {
     export TIMESTAMP
     RESULT_DIR="$SCRIPT_DIR/results/${benchmark_name}_${scale_factor}_${database_name}_${TIMESTAMP}"
     mkdir -p "$RESULT_DIR"
+    if [ -n "${RESULT_DIR_FILE:-}" ]; then
+        mkdir -p "$(dirname "$RESULT_DIR_FILE")"
+        printf '%s\n' "$RESULT_DIR" > "$RESULT_DIR_FILE"
+        echo "Result directory marker written to: $RESULT_DIR_FILE"
+    fi
     
     echo "Results: $RESULT_DIR"
     
