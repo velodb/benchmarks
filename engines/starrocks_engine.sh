@@ -441,7 +441,9 @@ engine_get_version() {
 engine_get_data_size_bytes() {
     export MYSQL_PWD="${password:-}"
     local args=(-h"$fe_host" -P"$fe_query_port" -u"$user")
-    mysql "${args[@]}" -N -s -e "SELECT IFNULL(SUM(DATA_LENGTH + INDEX_LENGTH),0) FROM information_schema.tables WHERE table_schema='${db}';" 2>/dev/null || true
+    # StarRocks exposes DATA_LENGTH in information_schema.tables, while
+    # INDEX_LENGTH is an unimplemented compatibility field and is NULL.
+    mysql "${args[@]}" -N -s -e "SELECT COALESCE(SUM(COALESCE(DATA_LENGTH, 0)), 0) FROM information_schema.tables WHERE table_schema='${db}';" 2>/dev/null || true
 }
 
 # Helper function to create database (used in DDL setup)
