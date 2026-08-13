@@ -356,6 +356,48 @@ detect_load_method() {
     fi
 }
 
+redact_profile_secrets() {
+    local content="$1"
+    local variable_name secret
+
+    for variable_name in password PASSWORD STORAGE_ACCESS_KEY STORAGE_SECRET_KEY; do
+        secret="${!variable_name:-}"
+        [ -z "$secret" ] && continue
+        content="${content//"$secret"/[REDACTED]}"
+    done
+    printf '%s\n' "$content"
+}
+
+collect_load_profile() {
+    local load_name="$1"
+    local load_method="$2"
+
+    [[ "${profile:-false}" == "true" ]] || return 0
+    engine_supports_load_profile || return 0
+    [[ "$load_method" != "stream_load" ]] || return 0
+
+    local profile_id profile_content profile_file attempt
+    profile_id=$(engine_get_last_load_profile_id 2>/dev/null || true)
+    if [ -z "$profile_id" ]; then
+        echo "WARN: No load profile ID found for ${load_name} (${load_method})" >&2
+        return 0
+    fi
+
+    for attempt in 1 2 3; do
+        profile_content=$(engine_fetch_load_profile "$profile_id" 2>/dev/null || true)
+        [ -n "$profile_content" ] && break
+        sleep 1
+    done
+    if [ -z "$profile_content" ]; then
+        echo "WARN: Load profile fetch returned empty for ${load_name} (${load_method})" >&2
+        return 0
+    fi
+
+    profile_file="$LOAD_PROFILE_DIR/${LOAD_PROFILE_ARTIFACT_PREFIX}_${load_method}_profile.txt"
+    redact_profile_secrets "$profile_content" > "$profile_file"
+    echo "    Load profile saved: ${profile_file#$RESULT_DIR/}"
+}
+
 run_load_directory() {
     local load_dir="$1"
     local detected_method="$2"
@@ -385,6 +427,10 @@ run_load_directory() {
         local filename
         filename=$(basename "$load_file")
         local table_name="${filename%.*}"
+        LOAD_PROFILE_SEQUENCE=$((LOAD_PROFILE_SEQUENCE + 1))
+        LOAD_PROFILE_ARTIFACT_PREFIX=$(printf '%03d_%s' \
+            "$LOAD_PROFILE_SEQUENCE" "${table_name//[^a-zA-Z0-9_.-]/_}")
+        export LOAD_PROFILE_ARTIFACT_PREFIX
 
         echo "  Loading $table_name..."
 
@@ -425,6 +471,7 @@ run_load_directory() {
 
         echo "$table_name,$detected_method,$duration" >> "$load_csv"
         echo "    ${duration}s"
+        collect_load_profile "$table_name" "$detected_method"
         loaded_count=$((loaded_count + 1))
     done
 
@@ -446,6 +493,15 @@ run_load() {
     # Initialize load results CSV
     local load_csv="$RESULT_DIR/load.csv"
     echo "table_name,method,load_time_seconds" > "$load_csv"
+
+    LOAD_PROFILE_SEQUENCE=0
+    if [[ "${profile:-false}" == "true" ]] && engine_supports_load_profile; then
+        LOAD_PROFILE_DIR="$RESULT_DIR/profile/load"
+        mkdir -p "$LOAD_PROFILE_DIR"
+        export LOAD_PROFILE_DIR
+    else
+        unset LOAD_PROFILE_DIR LOAD_PROFILE_ARTIFACT_PREFIX || true
+    fi
 
     local loaded_count=0
 

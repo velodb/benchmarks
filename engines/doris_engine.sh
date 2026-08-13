@@ -798,6 +798,45 @@ engine_fetch_profile() {
     echo -e "$(curl -s -u "${user}:${password:-}" "http://${fe_host}:${fe_http_port}/rest/v2/manager/query/profile/text/${query_id}" 2>/dev/null)"
 }
 
+engine_fetch_load_profile() {
+    local profile_id="$1"
+    local profile_content
+    profile_content=$(curl -fsS -u "${user}:${password:-}" --get \
+        --data-urlencode "query_id=${profile_id}" \
+        "http://${fe_host}:${fe_http_port}/api/profile/text" 2>/dev/null || true)
+    if [ -n "$profile_content" ] && [[ "$profile_content" != query\ id*not\ found* ]]; then
+        printf '%s\n' "$profile_content"
+        return 0
+    fi
+    return 1
+}
+
+engine_supports_load_profile() {
+    return 0
+}
+
+engine_run_profiled_load_sql_file() {
+    local sql_file="$1"
+    local profile_sql=""
+    local variable_name
+
+    export MYSQL_PWD="${password:-}"
+
+    for variable_name in enable_profile is_report_success; do
+        if mysql -h"$fe_host" -P"$fe_query_port" -u"$user" -N -s \
+            -e "SHOW VARIABLES LIKE '${variable_name}';" 2>/dev/null | grep -q .; then
+            profile_sql+="SET ${variable_name}=true;"$'\n'
+        fi
+    done
+    profile_sql+=$(cat "$sql_file")
+
+    if engine_run_sql "${db:-}" "$profile_sql"; then
+        LAST_LOAD_PROFILE_ID=$(engine_get_last_query_id 2>/dev/null || true)
+        return 0
+    fi
+    return 1
+}
+
 # Optional: fetch plan text for a query
 engine_get_plan() {
     local db_name="$1"

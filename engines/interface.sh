@@ -175,6 +175,18 @@ engine_fetch_profile() {
     return 1
 }
 
+engine_supports_load_profile() {
+    return 1
+}
+
+engine_get_last_load_profile_id() {
+    printf '%s\n' "${LAST_LOAD_PROFILE_ID:-}"
+}
+
+engine_fetch_load_profile() {
+    engine_fetch_profile "$1"
+}
+
 # - engine_get_plan(db, sql): print plan text for sql
 engine_get_plan() {
     echo "Plan collection not supported by this engine, skipping..." >&2
@@ -281,11 +293,34 @@ mysql_engine_print_load_status() {
     fi
 }
 
+mysql_engine_extract_load_label() {
+    local sql_file="$1"
+    local label
+    label=$(sed -nE \
+        's/^[[:space:]]*[Ll][Oo][Aa][Dd][[:space:]]+[Ll][Aa][Bb][Ee][Ll][[:space:]]+([^[:space:](;]+).*/\1/p' \
+        "$sql_file" | head -n 1)
+    label="${label//\`/}"
+    label="${label//\"/}"
+    printf '%s\n' "${label##*.}"
+}
+
+mysql_engine_run_load_sql_file() {
+    local sql_file="$1"
+    if [[ "${profile:-false}" == "true" ]] \
+        && type -t engine_run_profiled_load_sql_file >/dev/null; then
+        engine_run_profiled_load_sql_file "$sql_file"
+    else
+        engine_run_sql_file "$sql_file"
+    fi
+}
+
 mysql_engine_load_data() {
     local detected_method="$1"
     local load_file="$2"
     local table_name="$3"
     local load_output=""
+
+    LAST_LOAD_PROFILE_ID=""
 
     if [[ "$detected_method" == "stream_load" ]]; then
         if load_output=$(bash "$load_file" 2>&1); then
@@ -302,14 +337,17 @@ mysql_engine_load_data() {
         tmp_sql="$LAST_TEMP_FILE"
         envsubst < "$load_file" > "$tmp_sql"
 
-        if ! engine_run_sql_file "$tmp_sql"; then
+        local load_label
+        load_label=$(mysql_engine_extract_load_label "$tmp_sql")
+        load_label="${load_label:-${table_name}_${TIMESTAMP}}"
+
+        if ! mysql_engine_run_load_sql_file "$tmp_sql"; then
             rm -f "$tmp_sql"
             echo "ERROR: Failed to submit S3 load: $load_file" >&2
             return 1
         fi
         rm -f "$tmp_sql"
 
-        local load_label="${table_name}_${TIMESTAMP}"
         echo "    Waiting for S3 load to complete (label: $load_label)..."
 
         local max_wait=36000
@@ -331,6 +369,8 @@ mysql_engine_load_data() {
 
             if echo "$status_output" | grep -q "FINISHED"; then
                 echo "    S3 load completed successfully"
+                LAST_LOAD_PROFILE_ID=$(printf '%s\n' "$status_output" | awk -F ': ' \
+                    '/^[[:space:]]*JobId:/ {gsub(/[[:space:]]/, "", $2); print $2; exit}')
                 break
             elif echo "$status_output" | grep -q "CANCELLED"; then
                 echo "ERROR: S3 load cancelled" >&2
@@ -355,7 +395,7 @@ mysql_engine_load_data() {
         tmp_sql="$LAST_TEMP_FILE"
         envsubst < "$load_file" > "$tmp_sql"
 
-        if ! engine_run_sql_file "$tmp_sql"; then
+        if ! mysql_engine_run_load_sql_file "$tmp_sql"; then
             rm -f "$tmp_sql"
             echo "ERROR: Failed to execute load SQL file: $load_file" >&2
             return 1
