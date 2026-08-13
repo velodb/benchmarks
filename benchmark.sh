@@ -368,34 +368,53 @@ redact_profile_secrets() {
     printf '%s\n' "$content"
 }
 
-collect_load_profile() {
+queue_load_profile() {
     local load_name="$1"
     local load_method="$2"
+    local artifact_prefix="$3"
 
     [[ "${profile:-false}" == "true" ]] || return 0
     engine_supports_load_profile || return 0
     [[ "$load_method" != "stream_load" ]] || return 0
 
-    local profile_id profile_content profile_file attempt
+    local profile_id
     profile_id=$(engine_get_last_load_profile_id 2>/dev/null || true)
     if [ -z "$profile_id" ]; then
         echo "WARN: No load profile ID found for ${load_name} (${load_method})" >&2
         return 0
     fi
 
-    for attempt in 1 2 3; do
-        profile_content=$(engine_fetch_load_profile "$profile_id" 2>/dev/null || true)
-        [ -n "$profile_content" ] && break
-        sleep 1
-    done
-    if [ -z "$profile_content" ]; then
-        echo "WARN: Load profile fetch returned empty for ${load_name} (${load_method})" >&2
-        return 0
-    fi
+    load_profile_names+=("$load_name")
+    load_profile_methods+=("$load_method")
+    load_profile_ids+=("$profile_id")
+    load_profile_prefixes+=("$artifact_prefix")
+}
 
-    profile_file="$LOAD_PROFILE_DIR/${LOAD_PROFILE_ARTIFACT_PREFIX}_${load_method}_profile.txt"
-    redact_profile_secrets "$profile_content" > "$profile_file"
-    echo "    Load profile saved: ${profile_file#$RESULT_DIR/}"
+collect_load_profiles() {
+    [ ${#load_profile_ids[@]} -gt 0 ] || return 0
+
+    local profile_wait_seconds="${PROFILE_WAIT_SECONDS:-10}"
+    echo "Waiting ${profile_wait_seconds}s for asynchronous load profile generation before fetching..."
+    sleep "$profile_wait_seconds"
+
+    local profile_idx load_name load_method profile_id artifact_prefix
+    local profile_content profile_file
+    for profile_idx in "${!load_profile_ids[@]}"; do
+        load_name="${load_profile_names[$profile_idx]}"
+        load_method="${load_profile_methods[$profile_idx]}"
+        profile_id="${load_profile_ids[$profile_idx]}"
+        artifact_prefix="${load_profile_prefixes[$profile_idx]}"
+
+        profile_content=$(engine_fetch_load_profile "$profile_id" 2>/dev/null || true)
+        if [ -z "$profile_content" ]; then
+            echo "WARN: Load profile fetch returned empty for ${load_name} (${load_method})" >&2
+            continue
+        fi
+
+        profile_file="$LOAD_PROFILE_DIR/${artifact_prefix}_${load_method}_profile.txt"
+        redact_profile_secrets "$profile_content" > "$profile_file"
+        echo "    Load profile saved: ${profile_file#$RESULT_DIR/}"
+    done
 }
 
 run_load_directory() {
@@ -471,7 +490,7 @@ run_load_directory() {
 
         echo "$table_name,$detected_method,$duration" >> "$load_csv"
         echo "    ${duration}s"
-        collect_load_profile "$table_name" "$detected_method"
+        queue_load_profile "$table_name" "$detected_method" "$LOAD_PROFILE_ARTIFACT_PREFIX"
         loaded_count=$((loaded_count + 1))
     done
 
@@ -495,6 +514,10 @@ run_load() {
     echo "table_name,method,load_time_seconds" > "$load_csv"
 
     LOAD_PROFILE_SEQUENCE=0
+    local load_profile_names=()
+    local load_profile_methods=()
+    local load_profile_ids=()
+    local load_profile_prefixes=()
     if [[ "${profile:-false}" == "true" ]] && engine_supports_load_profile; then
         LOAD_PROFILE_DIR="$RESULT_DIR/profile/load"
         mkdir -p "$LOAD_PROFILE_DIR"
@@ -542,6 +565,7 @@ run_load() {
     fi
 
     echo "Data loading completed: $loaded_count tables"
+    collect_load_profiles
 }
 
 run_check_rows() {
