@@ -102,6 +102,42 @@ Our goal is to build `velodb.github.io/benchmarks` into the industry's most trus
    - `COLD_QUERY_COUNT` / `HOT_QUERY_COUNT` enable selectdb-qa style
      cold/hot query execution. Each cold run clears enabled caches first; hot
      runs do not clear cache, and the hot summary uses the minimum hot time.
+
+   To collect Doris execution diagnostics for both query and load phases, set
+   `PROFILE=true`:
+   ```bash
+   PROFILE=true LOAD=true QUERY=true bash benchmark.sh --config benchmarks/ssb/sf100/doris/benchmark.yaml
+   ```
+   Query profiles are written under `profile/`. Load artifacts are written
+   under `profile/load/` and indexed by `load_profile.csv`:
+   - `INSERT INTO ... SELECT` saves the Doris Load Profile identified by
+     `last_query_id()`.
+   - S3/Broker Load saves the final `SHOW LOAD` diagnostics and fetches the
+     Load Profile by Label/Job ID when the Doris version exposes one.
+   - Stream Load saves every HTTP response (including per-phase timings and
+     `TxnId`), including every chunk of a chunked upload. Doris does not expose
+     an FE Query ID for Stream Load on all supported versions.
+
+   Profile collection is best effort and does not turn a successful benchmark
+   load into a failure when a Doris version does not publish a profile. Use
+   `LOAD_PROFILE_WAIT_SECONDS` (default `10`) and
+   `LOAD_PROFILE_RETRY_INTERVAL_SECONDS` (default `1`) to tune profile fetch
+   retries. `LOAD_STATUS_POLL_INTERVAL_SECONDS` controls the S3/Broker Load
+   status polling interval (default `10`); use a shorter interval on busy test
+   clusters where completed profiles may be evicted quickly. Passwords and
+   configured object-storage credentials are redacted before artifacts are
+   written.
+
+   A reproducible Doris integration test is also available:
+   ```bash
+   FE_HOST=127.0.0.1 FE_QUERY_PORT=9030 FE_HTTP_PORT=8030 \
+   make integration-test-doris-profile
+   ```
+   It creates and removes an isolated database and asserts the INSERT,
+   S3/Broker Load, Stream Load, and query artifacts. See
+   [`docs/doris-load-profile-verification.md`](docs/doris-load-profile-verification.md)
+   for a recorded main-branch run and PR-ready evidence.
+
     Results are saved in the `results` directory under the corresponding path.
 
 ### View Results

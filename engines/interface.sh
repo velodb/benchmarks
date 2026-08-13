@@ -175,6 +175,33 @@ engine_fetch_profile() {
     return 1
 }
 
+# Optional helpers for load diagnostics. Engines that support detailed load
+# profiles should override engine_supports_load_profile() and may override the
+# remaining helpers when a load method needs engine-specific ID resolution.
+engine_supports_load_profile() {
+    return 1
+}
+
+engine_get_last_load_profile_id() {
+    printf '%s\n' "${LAST_LOAD_PROFILE_ID:-}"
+}
+
+engine_get_last_load_profile_label() {
+    printf '%s\n' "${LAST_LOAD_PROFILE_LABEL:-}"
+}
+
+engine_get_last_load_diagnostics() {
+    printf '%s\n' "${LAST_LOAD_DIAGNOSTICS:-}"
+}
+
+engine_fetch_load_profile() {
+    local load_method="$1"
+    local profile_id="$2"
+    local load_label="${3:-}"
+    : "$load_method" "$load_label"
+    engine_fetch_profile "$profile_id"
+}
+
 # - engine_get_plan(db, sql): print plan text for sql
 engine_get_plan() {
     echo "Plan collection not supported by this engine, skipping..." >&2
@@ -281,17 +308,48 @@ mysql_engine_print_load_status() {
     fi
 }
 
+mysql_engine_extract_load_label() {
+    local sql_file="$1"
+    local label=""
+
+    label=$(sed -nE \
+        's/^[[:space:]]*[Ll][Oo][Aa][Dd][[:space:]]+[Ll][Aa][Bb][Ee][Ll][[:space:]]+([^[:space:](;]+).*/\1/p' \
+        "$sql_file" | head -n 1)
+    label="${label//\`/}"
+    label="${label//\"/}"
+    label="${label##*.}"
+    printf '%s\n' "$label"
+}
+
+mysql_engine_run_load_sql_file() {
+    local detected_method="$1"
+    local sql_file="$2"
+
+    if [[ "${profile:-false}" == "true" ]] \
+        && type -t engine_run_profiled_load_sql_file >/dev/null; then
+        engine_run_profiled_load_sql_file "$detected_method" "$sql_file"
+    else
+        engine_run_sql_file "$sql_file"
+    fi
+}
+
 mysql_engine_load_data() {
     local detected_method="$1"
     local load_file="$2"
     local table_name="$3"
     local load_output=""
 
+    LAST_LOAD_PROFILE_ID=""
+    LAST_LOAD_PROFILE_LABEL=""
+    LAST_LOAD_DIAGNOSTICS=""
+
     if [[ "$detected_method" == "stream_load" ]]; then
         if load_output=$(bash "$load_file" 2>&1); then
             echo "$load_output"
+            LAST_LOAD_DIAGNOSTICS="$load_output"
         else
             echo "$load_output" >&2
+            LAST_LOAD_DIAGNOSTICS="$load_output"
             echo "ERROR: Failed to execute load script: $load_file" >&2
             return 1
         fi
@@ -302,24 +360,33 @@ mysql_engine_load_data() {
         tmp_sql="$LAST_TEMP_FILE"
         envsubst < "$load_file" > "$tmp_sql"
 
-        if ! engine_run_sql_file "$tmp_sql"; then
+        local load_label
+        load_label=$(mysql_engine_extract_load_label "$tmp_sql")
+        load_label="${load_label:-${table_name}_${TIMESTAMP}}"
+        LAST_LOAD_PROFILE_LABEL="$load_label"
+
+        if ! mysql_engine_run_load_sql_file "$detected_method" "$tmp_sql"; then
             rm -f "$tmp_sql"
             echo "ERROR: Failed to submit S3 load: $load_file" >&2
             return 1
         fi
         rm -f "$tmp_sql"
 
-        local load_label="${table_name}_${TIMESTAMP}"
         echo "    Waiting for S3 load to complete (label: $load_label)..."
 
         local max_wait=36000
+        local poll_interval="${LOAD_STATUS_POLL_INTERVAL_SECONDS:-10}"
+        if ! [[ "$poll_interval" =~ ^[1-9][0-9]*$ ]]; then
+            poll_interval=10
+        fi
         local waited=0
         while [ $waited -lt $max_wait ]; do
-            sleep 10
-            waited=$((waited + 10))
+            sleep "$poll_interval"
+            waited=$((waited + poll_interval))
 
             local status_output
             status_output=$(mysql_engine_check_load_status "$load_label")
+            LAST_LOAD_DIAGNOSTICS="$status_output"
             mysql_engine_print_load_status "$waited" "$status_output"
 
             # Fail fast when the load label cannot be found.
@@ -349,13 +416,20 @@ mysql_engine_load_data() {
             echo "ERROR: S3 load timeout after ${max_wait}s" >&2
             return 1
         fi
+
+        if [[ "${profile:-false}" == "true" ]] \
+            && type -t engine_finalize_profiled_async_load >/dev/null; then
+            if ! engine_finalize_profiled_async_load "$load_label" "$LAST_LOAD_DIAGNOSTICS"; then
+                echo "WARN: Failed to resolve load profile for S3 load label: $load_label" >&2
+            fi
+        fi
     elif [[ "$detected_method" == "insert_into" ]]; then
         local tmp_sql
         create_temp_sql_file "load_${table_name}"
         tmp_sql="$LAST_TEMP_FILE"
         envsubst < "$load_file" > "$tmp_sql"
 
-        if ! engine_run_sql_file "$tmp_sql"; then
+        if ! mysql_engine_run_load_sql_file "$detected_method" "$tmp_sql"; then
             rm -f "$tmp_sql"
             echo "ERROR: Failed to execute load SQL file: $load_file" >&2
             return 1

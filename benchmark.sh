@@ -356,6 +356,114 @@ detect_load_method() {
     fi
 }
 
+sanitize_artifact_component() {
+    local value="$1"
+    value="${value//[^a-zA-Z0-9_.-]/_}"
+    printf '%s\n' "${value:-unknown}"
+}
+
+redact_sensitive_text() {
+    local content="$1"
+    local variable_name secret
+
+    for variable_name in password PASSWORD STORAGE_ACCESS_KEY STORAGE_SECRET_KEY; do
+        secret="${!variable_name:-}"
+        [ -z "$secret" ] && continue
+        content=$(printf '%s' "$content" | REDACT_NEEDLE="$secret" awk '
+            BEGIN { needle = ENVIRON["REDACT_NEEDLE"]; replacement = "[REDACTED]" }
+            {
+                line = $0
+                while (needle != "" && (position = index(line, needle)) > 0) {
+                    line = substr(line, 1, position - 1) replacement substr(line, position + length(needle))
+                }
+                print line
+            }
+        ')
+    done
+
+    printf '%s\n' "$content"
+}
+
+append_load_profile_index() {
+    local load_name="$1"
+    local method="$2"
+    local profile_id="$3"
+    local artifact_type="$4"
+    local artifact_file="$5"
+
+    [ -z "${LOAD_PROFILE_INDEX:-}" ] && return 0
+    load_name="${load_name//\"/\"\"}"
+    method="${method//\"/\"\"}"
+    profile_id="${profile_id//\"/\"\"}"
+    artifact_type="${artifact_type//\"/\"\"}"
+    artifact_file="${artifact_file//\"/\"\"}"
+    printf '"%s","%s","%s","%s","%s"\n' \
+        "$load_name" "$method" "$profile_id" "$artifact_type" "$artifact_file" \
+        >> "$LOAD_PROFILE_INDEX"
+}
+
+collect_load_profile_artifacts() {
+    local artifact_prefix="$1"
+    local table_name="$2"
+    local detected_method="$3"
+
+    [[ "${profile:-false}" == "true" ]] || return 0
+    engine_supports_load_profile || return 0
+
+    local diagnostics=""
+    diagnostics=$(engine_get_last_load_diagnostics 2>/dev/null || true)
+    if [ -n "$diagnostics" ]; then
+        local diagnostics_file="$LOAD_PROFILE_DIR/${artifact_prefix}_${detected_method}_diagnostics.txt"
+        redact_sensitive_text "$diagnostics" > "$diagnostics_file"
+        append_load_profile_index "$table_name" "$detected_method" "" "diagnostics" \
+            "${diagnostics_file#$RESULT_DIR/}"
+    fi
+
+    # Stream Load has no FE Query ID on the tested Doris versions. Its HTTP
+    # response contains the useful phase timings and is persisted by
+    # doris_stream_load_utils.sh for every request/chunk.
+    if [[ "$detected_method" == "stream_load" ]]; then
+        return 0
+    fi
+
+    local profile_id load_label
+    profile_id=$(engine_get_last_load_profile_id 2>/dev/null || true)
+    load_label=$(engine_get_last_load_profile_label 2>/dev/null || true)
+    if [ -z "$profile_id" ]; then
+        echo "WARN: No load profile ID found for ${table_name} (${detected_method})" >&2
+        return 0
+    fi
+
+    local wait_seconds="${LOAD_PROFILE_WAIT_SECONDS:-10}"
+    local retry_interval="${LOAD_PROFILE_RETRY_INTERVAL_SECONDS:-1}"
+    [[ "$wait_seconds" =~ ^[0-9]+$ ]] || wait_seconds=10
+    [[ "$retry_interval" =~ ^[1-9][0-9]*$ ]] || retry_interval=1
+
+    local elapsed=0
+    local profile_content=""
+    while :; do
+        profile_content=$(engine_fetch_load_profile \
+            "$detected_method" "$profile_id" "$load_label" 2>/dev/null || true)
+        [ -n "$profile_content" ] && break
+        (( elapsed >= wait_seconds )) && break
+        sleep "$retry_interval"
+        elapsed=$((elapsed + retry_interval))
+    done
+
+    if [ -z "$profile_content" ]; then
+        echo "WARN: Load profile fetch returned empty for ${table_name} (${detected_method}, ID: ${profile_id})" >&2
+        return 0
+    fi
+
+    local safe_profile_id profile_file
+    safe_profile_id=$(sanitize_artifact_component "$profile_id")
+    profile_file="$LOAD_PROFILE_DIR/${artifact_prefix}_${detected_method}_${safe_profile_id}_profile.txt"
+    redact_sensitive_text "$profile_content" > "$profile_file"
+    append_load_profile_index "$table_name" "$detected_method" "$profile_id" "profile" \
+        "${profile_file#$RESULT_DIR/}"
+    echo "    Load profile saved: ${profile_file#$RESULT_DIR/}"
+}
+
 run_load_directory() {
     local load_dir="$1"
     local detected_method="$2"
@@ -385,6 +493,11 @@ run_load_directory() {
         local filename
         filename=$(basename "$load_file")
         local table_name="${filename%.*}"
+        LOAD_ARTIFACT_SEQUENCE=$((LOAD_ARTIFACT_SEQUENCE + 1))
+        local safe_table_name artifact_prefix
+        safe_table_name=$(sanitize_artifact_component "$table_name")
+        artifact_prefix=$(printf '%03d_%s' "$LOAD_ARTIFACT_SEQUENCE" "$safe_table_name")
+        export LOAD_PROFILE_ARTIFACT_PREFIX="$artifact_prefix"
 
         echo "  Loading $table_name..."
 
@@ -425,6 +538,7 @@ run_load_directory() {
 
         echo "$table_name,$detected_method,$duration" >> "$load_csv"
         echo "    ${duration}s"
+        collect_load_profile_artifacts "$artifact_prefix" "$table_name" "$detected_method"
         loaded_count=$((loaded_count + 1))
     done
 
@@ -446,6 +560,17 @@ run_load() {
     # Initialize load results CSV
     local load_csv="$RESULT_DIR/load.csv"
     echo "table_name,method,load_time_seconds" > "$load_csv"
+
+    LOAD_ARTIFACT_SEQUENCE=0
+    if [[ "${profile:-false}" == "true" ]] && engine_supports_load_profile; then
+        LOAD_PROFILE_DIR="$RESULT_DIR/profile/load"
+        LOAD_PROFILE_INDEX="$RESULT_DIR/load_profile.csv"
+        mkdir -p "$LOAD_PROFILE_DIR"
+        echo 'load_name,method,profile_id,artifact_type,file' > "$LOAD_PROFILE_INDEX"
+        export LOAD_PROFILE_DIR LOAD_PROFILE_INDEX
+    else
+        unset LOAD_PROFILE_DIR LOAD_PROFILE_INDEX LOAD_PROFILE_ARTIFACT_PREFIX || true
+    fi
 
     local loaded_count=0
 
@@ -827,7 +952,7 @@ run_query() {
             profile_content=$(engine_fetch_profile "$p_id" 2>/dev/null || true)
 
             if [ -n "$profile_content" ]; then
-                printf "%s\n" "$profile_content" > "$profile_dir/${p_name}_run${p_run}_profile.txt"
+                redact_sensitive_text "$profile_content" > "$profile_dir/${p_name}_run${p_run}_profile.txt"
             else
                 echo "Profile fetch returned empty for ${p_name} run ${p_run}" >&2
             fi

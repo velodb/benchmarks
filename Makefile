@@ -1,8 +1,10 @@
 THIRDPATY_URL ?= https://bench-dataset.oss-cn-beijing.aliyuncs.com/thirdpaty/benchmark_thirdpaty.tar.gz
 
-.PHONY: help result dist clean thirdpaty
+.PHONY: help test integration-test-doris-profile result dist clean thirdpaty
 help:
 	@echo "Available targets:"
+	@echo "  test            - Run benchmark helper tests"
+	@echo "  integration-test-doris-profile - Run Doris Load Profile end-to-end test"
 	@echo "  result          - Generate the benchmark results HTML report"
 	@echo "  dist            - Create a tar.gz archive of the benchmarks"
 	@echo "  clean           - Remove generated benchmark archive"
@@ -10,6 +12,11 @@ help:
 	@echo "                   Override with THIRDPATY_URL=<url>"
 	@echo "  help            - Show this help message"
 
+test:
+	bash $(CURDIR)/tests/load_profile_test.sh
+
+integration-test-doris-profile:
+	bash $(CURDIR)/tests/doris_load_profile_integration_test.sh
 
 result:
 	bash $(CURDIR)/scripts/generate-html.sh

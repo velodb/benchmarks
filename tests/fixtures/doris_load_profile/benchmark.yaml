@@ -1,0 +1,30 @@
+engine:
+  type: "doris"
+  connection:
+    fe_host: "${FE_HOST:-127.0.0.1}"
+    fe_http_port: "${FE_HTTP_PORT:-8030}"
+    fe_query_port: "${FE_QUERY_PORT:-9030}"
+    user: "${DB_USER:-root}"
+    password: "${PASSWORD:-}"
+    db: "${DB:-benchmark_load_profile_integration}"
+
+parameters:
+  load: "true"
+  query: "true"
+  session: "false"
+  analyze: "false"
+  query_times: "1"
+  profile: "true"
+  drop_database: "true"
+
+paths:
+  ddl: "ddl/ddl.sql"
+  load_steps:
+    - dir: "load/insert_into"
+      method: "insert_into"
+    - dir: "load/s3_load"
+      method: "s3_load"
+    - dir: "load/stream_load"
+      method: "stream_load"
+  query_dir: "query"
+  query_mode: "file"

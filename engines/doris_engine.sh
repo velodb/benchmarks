@@ -25,6 +25,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/http_utils.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/common_utils.sh"
 
 BE_HOSTS_ARR=()
+DORIS_HAS_ENABLE_PROFILE="false"
+DORIS_HAS_IS_REPORT_SUCCESS="false"
+DORIS_PROFILE_PREVIOUS_GLOBAL_VALUE=""
 
 doris_qualified_db() {
     local db_name="$1"
@@ -138,6 +141,19 @@ should_clear_cache_for_cold_query_run() {
     any_clear_cache_enabled
 }
 
+doris_detect_profile_variables() {
+    local output=""
+    export MYSQL_PWD="${password:-}"
+
+    output=$(mysql -h"$fe_host" -P"$fe_query_port" -u"$user" -N -s \
+        -e "SHOW VARIABLES LIKE 'enable_profile';" 2>/dev/null || true)
+    [ -n "$output" ] && DORIS_HAS_ENABLE_PROFILE="true"
+
+    output=$(mysql -h"$fe_host" -P"$fe_query_port" -u"$user" -N -s \
+        -e "SHOW VARIABLES LIKE 'is_report_success';" 2>/dev/null || true)
+    [ -n "$output" ] && DORIS_HAS_IS_REPORT_SUCCESS="true"
+}
+
 # 1. Initialize and check Doris dependencies
 engine_init() {
     echo "Initializing Doris engine..."
@@ -213,6 +229,11 @@ engine_init() {
         echo "ERROR: Missing required environment variables: ${missing_vars[*]}" >&2
         echo "Please set these variables in your benchmark.yaml configuration." >&2
         return 1
+    fi
+
+    if [[ "${profile:-false}" == "true" ]]; then
+        doris_detect_profile_variables
+        echo "Doris load profile variables: enable_profile=${DORIS_HAS_ENABLE_PROFILE}, is_report_success=${DORIS_HAS_IS_REPORT_SUCCESS}"
     fi
     
     if any_clear_cache_enabled || should_configure_doris_page_cache; then
@@ -768,13 +789,34 @@ engine_get_jdbc_sampler_name() {
 # Optional: enable query profile collection
 engine_enable_profile() {
     export MYSQL_PWD="${password:-}"
-    mysql -h"$fe_host" -P"$fe_query_port" -u"$user" -e "set global enable_profile=true;" >/dev/null 2>&1
+    local current_value
+    current_value=$(mysql -h"$fe_host" -P"$fe_query_port" -u"$user" -N -s \
+        -e "SELECT @@global.enable_profile;" 2>/dev/null || true)
+    current_value="${current_value%%$'\n'*}"
+    DORIS_PROFILE_PREVIOUS_GLOBAL_VALUE="$current_value"
+
+    case "$(to_lower "$current_value")" in
+        1|true)
+            return 0
+            ;;
+    esac
+    mysql -h"$fe_host" -P"$fe_query_port" -u"$user" \
+        -e "set global enable_profile=true;" >/dev/null 2>&1
 }
 
 # Optional: disable query profile collection
 engine_disable_profile() {
     export MYSQL_PWD="${password:-}"
-    mysql -h"$fe_host" -P"$fe_query_port" -u"$user" -e "set global enable_profile=false;" >/dev/null 2>&1
+    case "$(to_lower "${DORIS_PROFILE_PREVIOUS_GLOBAL_VALUE:-}")" in
+        1|true)
+            # Profiling was already enabled before this benchmark; preserve it.
+            return 0
+            ;;
+        0|false|"")
+            mysql -h"$fe_host" -P"$fe_query_port" -u"$user" \
+                -e "set global enable_profile=false;" >/dev/null 2>&1
+            ;;
+    esac
 }
 
 # Optional: get last query id (best effort)
@@ -795,7 +837,110 @@ engine_fetch_profile() {
     if [ -z "$query_id" ]; then
         return 1
     fi
-    echo -e "$(curl -s -u "${user}:${password:-}" "http://${fe_host}:${fe_http_port}/rest/v2/manager/query/profile/text/${query_id}" 2>/dev/null)"
+
+    local profile_content=""
+    profile_content=$(curl -fsS -u "${user}:${password:-}" --get \
+        --data-urlencode "query_id=${query_id}" \
+        "http://${fe_host}:${fe_http_port}/api/profile/text" 2>/dev/null || true)
+    if [ -n "$profile_content" ] \
+        && [[ "$profile_content" != query\ id*not\ found* ]] \
+        && [[ "$profile_content" != *"No static resource"* ]]; then
+        printf '%s\n' "$profile_content"
+        return 0
+    fi
+
+    # Compatibility fallback for deployments exposing only the v2 manager API.
+    local response=""
+    response=$(curl -fsS -u "${user}:${password:-}" \
+        "http://${fe_host}:${fe_http_port}/rest/v2/manager/query/profile/text/${query_id}" \
+        2>/dev/null || true)
+    if [ -n "$response" ] && command -v jq >/dev/null 2>&1; then
+        profile_content=$(printf '%s' "$response" | jq -r '.data.profile // empty' 2>/dev/null || true)
+    fi
+    [ -n "$profile_content" ] || return 1
+    printf '%s\n' "$profile_content"
+}
+
+engine_supports_load_profile() {
+    return 0
+}
+
+engine_run_profiled_load_sql_file() {
+    local detected_method="$1"
+    local sql_file="$2"
+    local db_name error_file profiled_sql_file output status=0
+    : "$detected_method"
+
+    db_name=$(doris_qualified_db "${db:-}")
+    error_file=$(mktemp "${TMPDIR:-/tmp}/doris_load_profile_stderr.XXXXXX") || return 1
+    profiled_sql_file=$(mktemp "${TMPDIR:-/tmp}/doris_load_profile_sql.XXXXXX") || {
+        rm -f "$error_file"
+        return 1
+    }
+
+    {
+        if [[ "$DORIS_HAS_ENABLE_PROFILE" == "true" ]]; then
+            printf 'SET enable_profile=true;\n'
+        fi
+        if [[ "$DORIS_HAS_IS_REPORT_SUCCESS" == "true" ]]; then
+            printf 'SET is_report_success=true;\n'
+        fi
+        cat "$sql_file"
+        printf '\nSELECT last_query_id();\n'
+    } > "$profiled_sql_file"
+
+    export MYSQL_PWD="${password:-}"
+    local args=(-h"$fe_host" -P"$fe_query_port" -u"$user" --batch --skip-column-names)
+    [ -n "$db_name" ] && args+=(-D"$db_name")
+    if output=$(mysql "${args[@]}" < "$profiled_sql_file" 2>"$error_file"); then
+        LAST_LOAD_PROFILE_ID=$(printf '%s\n' "$output" | sed '/^[[:space:]]*$/d' | tail -n 1)
+    else
+        status=$?
+        echo "ERROR: Failed to execute profiled load SQL file: $sql_file" >&2
+        [ -s "$error_file" ] && cat "$error_file" >&2
+    fi
+    rm -f "$error_file" "$profiled_sql_file"
+    return "$status"
+}
+
+doris_find_load_profile_id_by_label() {
+    local load_label="$1"
+    local db_name output
+    db_name=$(doris_qualified_db "${db:-}")
+    export MYSQL_PWD="${password:-}"
+    local args=(-h"$fe_host" -P"$fe_query_port" -u"$user" --batch --skip-column-names)
+    [ -n "$db_name" ] && args+=(-D"$db_name")
+
+    output=$(mysql "${args[@]}" -e "SHOW LOAD PROFILE '/';" 2>/dev/null || true)
+    printf '%s\n' "$output" | awk -F '\t' -v label="$load_label" '
+        index($0, label) > 0 { print $1; exit }
+    '
+}
+
+engine_finalize_profiled_async_load() {
+    local load_label="$1"
+    local status_output="$2"
+    local job_id profile_id
+
+    job_id=$(printf '%s\n' "$status_output" | awk -F ': ' \
+        '/^[[:space:]]*JobId:/ {gsub(/[[:space:]]/, "", $2); print $2; exit}')
+    profile_id=$(doris_find_load_profile_id_by_label "$load_label")
+    LAST_LOAD_PROFILE_LABEL="$load_label"
+    LAST_LOAD_PROFILE_ID="${profile_id:-$job_id}"
+    [ -n "$LAST_LOAD_PROFILE_ID" ]
+}
+
+engine_fetch_load_profile() {
+    local detected_method="$1"
+    local profile_id="$2"
+    local load_label="${3:-}"
+
+    if [[ "$detected_method" == "s3_load" && -n "$load_label" ]]; then
+        local resolved_profile_id
+        resolved_profile_id=$(doris_find_load_profile_id_by_label "$load_label")
+        profile_id="${resolved_profile_id:-$profile_id}"
+    fi
+    engine_fetch_profile "$profile_id"
 }
 
 # Optional: fetch plan text for a query
