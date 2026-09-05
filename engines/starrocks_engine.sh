@@ -42,6 +42,8 @@ starrocks_qualified_table() {
 engine_init() {
     echo "Initializing StarRocks engine..."
 
+    init_mysql_client || return 1
+
     # Initialize MySQL JDBC driver for JMeter if needed
     if [[ "${jmeter:-}" == "true" ]] && [ -n "${JMETER_HOME:-}" ]; then
         init_mysql_jdbc_driver

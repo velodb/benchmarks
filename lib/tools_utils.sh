@@ -6,6 +6,10 @@
 
 # Global variable for tools directory
 TOOLS_DIR=""
+TOOLS_WRAPPER_DIR=""
+TOOLS_COMMON_TOOLS_READY=""
+TOOLS_CURL_TOOL_READY=""
+TOOLS_UTILS_LOADED=1
 
 # Initialize tools directory path
 _init_tools_dir() {
@@ -16,16 +20,132 @@ _init_tools_dir() {
     fi
 }
 
+_init_tools_wrapper_dir() {
+    if [ -n "$TOOLS_WRAPPER_DIR" ] && [ -d "$TOOLS_WRAPPER_DIR" ]; then
+        case ":$PATH:" in
+            *":$TOOLS_WRAPPER_DIR:"*) ;;
+            *) export PATH="$TOOLS_WRAPPER_DIR:$PATH" ;;
+        esac
+        return 0
+    fi
+
+    TOOLS_WRAPPER_DIR="$(mktemp -d "${TMPDIR:-/tmp}/benchmarks-tools.XXXXXX")" || return 1
+    export PATH="$TOOLS_WRAPPER_DIR:$PATH"
+}
+
+_write_command_wrapper() {
+    local wrapper_path="$1"
+    local target_binary="$2"
+    local target_ld_path="${3:-}"
+
+    mkdir -p "$(dirname "$wrapper_path")"
+
+    if [ -n "$target_ld_path" ]; then
+        cat >"$wrapper_path" <<EOF
+#!/bin/sh
+exec env LD_LIBRARY_PATH="$target_ld_path\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" "$target_binary" "\$@"
+EOF
+    else
+        cat >"$wrapper_path" <<EOF
+#!/bin/sh
+exec "$target_binary" "\$@"
+EOF
+    fi
+
+    chmod +x "$wrapper_path"
+}
+
+_find_fallback_command() {
+    local cmd_name="$1"
+    local path_entry
+    local candidate
+    local -a path_entries
+
+    IFS=':' read -r -a path_entries <<< "${PATH:-}"
+    for path_entry in "${path_entries[@]}"; do
+        [ -n "$path_entry" ] || path_entry="."
+        if [ -n "$TOOLS_WRAPPER_DIR" ] && [ "$path_entry" = "$TOOLS_WRAPPER_DIR" ]; then
+            continue
+        fi
+        if [ -n "$TOOLS_DIR" ] && [ "$path_entry" = "$TOOLS_DIR/bin" ]; then
+            continue
+        fi
+
+        candidate="$path_entry/$cmd_name"
+        if [ -x "$candidate" ] && [ ! -d "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    command -p -v "$cmd_name" 2>/dev/null || true
+}
+
+_init_command_with_fallback() {
+    local cmd_name="$1"
+    local local_binary="$2"
+    local local_ld_path="${3:-}"
+    local wrapper_path="$TOOLS_WRAPPER_DIR/$cmd_name"
+    local system_binary=""
+
+    if [ -x "$local_binary" ]; then
+        if [ -n "$local_ld_path" ]; then
+            if env LD_LIBRARY_PATH="$local_ld_path" "$local_binary" --version >/dev/null 2>&1; then
+                _write_command_wrapper "$wrapper_path" "$local_binary" "$local_ld_path"
+                echo "Using local $cmd_name: $local_binary"
+                return 0
+            fi
+        elif "$local_binary" --version >/dev/null 2>&1; then
+            _write_command_wrapper "$wrapper_path" "$local_binary"
+            echo "Using local $cmd_name: $local_binary"
+            return 0
+        fi
+
+        echo "WARNING: local $cmd_name is not runnable on this host, falling back to system $cmd_name." >&2
+    fi
+
+    system_binary="$(_find_fallback_command "$cmd_name")"
+    if [ -n "$system_binary" ]; then
+        _write_command_wrapper "$wrapper_path" "$system_binary"
+        echo "Using system $cmd_name: $system_binary"
+        return 0
+    fi
+
+    echo "ERROR: $cmd_name not found in tools directory or system PATH" >&2
+    return 1
+}
+
 init_common_tools() {
     _init_tools_dir
+    _init_tools_wrapper_dir || return 1
 
-    if [ -d "$TOOLS_DIR/bin" ]; then
-        export PATH="$TOOLS_DIR/bin:$PATH"
+    if [ -n "$TOOLS_COMMON_TOOLS_READY" ]; then
+        return 0
     fi
 
-    if [ -d "$TOOLS_DIR/lib" ]; then
-        export LD_LIBRARY_PATH="$TOOLS_DIR/lib:${LD_LIBRARY_PATH:-}"
+    local missing_tools=()
+
+    _init_command_with_fallback jq "$TOOLS_DIR/bin/jq" "$TOOLS_DIR/lib" || missing_tools+=("jq")
+    _init_command_with_fallback bc "$TOOLS_DIR/bin/bc" "$TOOLS_DIR/lib" || missing_tools+=("bc")
+    _init_command_with_fallback envsubst "$TOOLS_DIR/bin/envsubst" "$TOOLS_DIR/lib" || missing_tools+=("envsubst")
+    if [ ${#missing_tools[@]} -ne 0 ]; then
+        echo "ERROR: missing required common tools: ${missing_tools[*]}" >&2
+        return 1
     fi
+
+    TOOLS_COMMON_TOOLS_READY=1
+}
+
+init_curl_tool() {
+    _init_tools_dir
+    _init_tools_wrapper_dir || return 1
+
+    if [ -n "$TOOLS_CURL_TOOL_READY" ]; then
+        return 0
+    fi
+
+    _init_command_with_fallback curl "$TOOLS_DIR/bin/curl" "$TOOLS_DIR/lib" || return 1
+    TOOLS_CURL_TOOL_READY=1
 }
 
 # Initialize yq from tools directory
@@ -172,43 +292,6 @@ init_sysbench() {
     fi
 
     echo "ERROR: sysbench not found in tools directory or system PATH" >&2
-    return 1
-}
-
-init_mysql_client() {
-    _init_tools_dir
-    init_common_tools
-
-    local mysql_dir="$TOOLS_DIR/mysql_client_dir"
-    local mysql_binary="$mysql_dir/bin/mysql"
-    local mysql_archive="$TOOLS_DIR/mysql_client_dir.tar.gz"
-
-    if [ ! -x "$mysql_binary" ] && [ -f "$mysql_archive" ]; then
-        echo "Extracting mysql client..."
-        rm -rf "$mysql_dir"
-        tar -xzf "$mysql_archive" -C "$TOOLS_DIR"
-    fi
-
-    if [ -x "$mysql_binary" ]; then
-        export PATH="$mysql_dir/bin:$PATH"
-        if [ -d "$mysql_dir/lib" ]; then
-            export LD_LIBRARY_PATH="$mysql_dir/lib:${LD_LIBRARY_PATH:-}"
-        fi
-        echo "Using local mysql client: $mysql_binary"
-        return 0
-    fi
-
-    if [ -x "$TOOLS_DIR/bin/mysql" ]; then
-        echo "Using local mysql client: $TOOLS_DIR/bin/mysql"
-        return 0
-    fi
-
-    if command -v mysql >/dev/null 2>&1; then
-        echo "Using system mysql client"
-        return 0
-    fi
-
-    echo "ERROR: mysql client not found in tools directory or system PATH" >&2
     return 1
 }
 

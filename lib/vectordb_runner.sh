@@ -104,9 +104,7 @@ execute_vectordbbench_task() {
 
     # 4. Ensure Database Exists (Doris requires explicit creation)
     echo "  Ensuring database $db exists..."
-    if declare -f init_mysql_client >/dev/null 2>&1; then
-        init_mysql_client || return 1
-    fi
+    init_mysql_client || return 1
     export MYSQL_PWD="${password:-}"
     mysql -h"$fe_host" -P"$fe_query_port" -u"$user" -e "CREATE DATABASE IF NOT EXISTS $db" || echo "Warning: Failed to ensure database exists, attempting to proceed..."
 
