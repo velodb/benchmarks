@@ -327,11 +327,13 @@ engine_run_sql() {
         *";") printf 'select last_query_id();\n' >> "$sql_file" ;;
         *) printf ';\nselect last_query_id();\n' >> "$sql_file" ;;
     esac
-    if output=$(mysql "${args[@]}" --batch --skip-column-names < "$sql_file" 2>"$error_file"); then
+    rm -f "$last_query_id_file"
+    if (set -o pipefail
+        mysql "${args[@]}" --batch --raw --skip-column-names --quick < "$sql_file" 2>"$error_file" \
+            | awk 'NF { last=$0 } END { if (last != "") print last }' > "$last_query_id_file"
+    ); then
         rm -f "$sql_file"
         rm -f "$error_file"
-        # The last non-empty line of stdout is the query ID.
-        echo "$output" | sed '/^[[:space:]]*$/d' | tail -n 1 > "$last_query_id_file"
         return 0
     else
         status=$?

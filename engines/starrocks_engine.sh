@@ -193,9 +193,12 @@ engine_run_sql() {
         *";") printf 'SELECT last_query_id();\n' >> "$sql_file" ;;
         *) printf ';\nSELECT last_query_id();\n' >> "$sql_file" ;;
     esac
-    if output=$(mysql "${args[@]}" --batch --skip-column-names < "$sql_file" 2>"$error_file"); then
+    rm -f "$last_query_id_file"
+    if (set -o pipefail
+        mysql "${args[@]}" --batch --raw --skip-column-names --quick < "$sql_file" 2>"$error_file" \
+            | awk 'NF { last=$0 } END { if (last != "") print last }' > "$last_query_id_file"
+    ); then
         rm -f "$sql_file" "$error_file"
-        echo "$output" | sed '/^[[:space:]]*$/d' | tail -n 1 > "$last_query_id_file"
         return 0
     else
         status=$?
