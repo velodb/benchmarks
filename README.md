@@ -217,6 +217,7 @@ This document details how to conduct performance testing for different databases
 | ClickHouse Cloud  | Create ClickHouse Cloud cluster; configure network and security settings; install client tool `clickhouse-client` |
 | BigQuery          | Create Google Cloud project and enable BigQuery API; configure service account and permissions; install client tool `bq` |
 | Trino             | Install Trino cluster, refer to [official documentation](https://trino.io/docs/current/installation.html); configure connections to data sources; install client tool `trino-cli`, a [deployment script](docs/iceberg/prepare-env/trino/deploy.sh) is provided |
+| Apache Spark SQL  | Run a Spark Thrift Server with the required catalog/storage dependencies; configure the REST Catalog and OSS credentials; install the matching `beeline` client |
 
 #### Test Set Preparation
 
