@@ -323,6 +323,7 @@ mysql_engine_load_data() {
     LAST_LOAD_PROFILE_ID=""
 
     if [[ "$detected_method" == "stream_load" ]]; then
+        init_curl_tool || return 1
         if load_output=$(bash "$load_file" 2>&1); then
             echo "$load_output"
         else

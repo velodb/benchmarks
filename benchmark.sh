@@ -31,6 +31,7 @@ create_temp_sql_file() {
 # Load modular components
 source "$SCRIPT_DIR/lib/common_utils.sh"
 source "$SCRIPT_DIR/lib/tools_utils.sh"
+source "$SCRIPT_DIR/lib/client_utils.sh"
 source "$SCRIPT_DIR/lib/jmx_generator.sh"
 source "$SCRIPT_DIR/lib/result.sh"
 
@@ -463,6 +464,7 @@ run_load_directory() {
         else
             # Default fallback for engines that don't implement engine_load_data
             if [[ "$detected_method" == "stream_load" ]]; then
+                init_curl_tool || die "Failed to initialize curl"
                 if load_output=$(bash "$load_file" 2>&1); then
                     echo "$load_output"
                 else

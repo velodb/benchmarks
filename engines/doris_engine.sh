@@ -142,9 +142,7 @@ should_clear_cache_for_cold_query_run() {
 engine_init() {
     echo "Initializing Doris engine..."
 
-    if declare -f init_mysql_client >/dev/null 2>&1; then
-        init_mysql_client || return 1
-    fi
+    init_mysql_client || return 1
     
     # Initialize MySQL JDBC driver for JMeter if needed
     if [[ "${jmeter:-}" == "true" ]] && [ -n "${JMETER_HOME:-}" ]; then
@@ -165,23 +163,21 @@ engine_init() {
         fi
     done
 
-    if [[ "${profile:-}" == "true" ]]; then
-        for cmd in curl; do
-            if ! command -v "$cmd" >/dev/null 2>&1; then
-                missing_deps+=("$cmd")
-            fi
-        done
-    fi
-    
     local sys_cache_method="${clear_sys_page_cache_method:-ssh}"
     sys_cache_method="$(to_lower "$sys_cache_method")"
+    local needs_curl="false"
 
+    if [[ "${profile:-}" == "true" ]]; then
+        needs_curl="true"
+    fi
     if [[ "${clear_file_cache:-false}" == "true" ]] \
         || should_configure_doris_page_cache \
         || [[ "${clear_sys_page_cache:-false}" == "true" && "$sys_cache_method" == "http" ]]; then
-        if ! command -v curl >/dev/null 2>&1; then
-            missing_deps+=("curl")
-        fi
+        needs_curl="true"
+    fi
+
+    if [[ "$needs_curl" == "true" ]]; then
+        init_curl_tool || missing_deps+=("curl")
     fi
     if [[ "${clear_sys_page_cache:-false}" == "true" && "$sys_cache_method" == "ssh" ]]; then
         if ! command -v ssh >/dev/null 2>&1; then

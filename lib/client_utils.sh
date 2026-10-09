@@ -3,8 +3,14 @@
 #
 # This library provides functions to initialize database client tools.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TOOLS_DIR="${SCRIPT_DIR}/../tools"
+CLIENT_UTILS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLIENT_UTILS_LOADED=1
+if [ -z "${TOOLS_UTILS_LOADED:-}" ]; then
+    # shellcheck source=lib/tools_utils.sh
+    source "$CLIENT_UTILS_DIR/tools_utils.sh"
+fi
+TOOLS_DIR="$(dirname "$CLIENT_UTILS_DIR")/tools"
+TOOLS_MYSQL_TOOL_READY="${TOOLS_MYSQL_TOOL_READY:-}"
 
 # Initialize Snowflake client (snowsql)
 # Extracts snowsql from pre-packaged archive in tools directory
@@ -63,14 +69,20 @@ init_snowflake_client() {
     fi
 }
 
-# Initialize MySQL client
-# Placeholder for future implementation
-init_mysql_client() {
-    if command -v mysql >/dev/null 2>&1; then
-        echo "mysql client found in system PATH"
+# Initialize MySQL client with bundled-tool fallback.
+init_mysql_client_with_fallback() {
+    _init_tools_dir
+    _init_tools_wrapper_dir || return 1
+
+    if [ -n "$TOOLS_MYSQL_TOOL_READY" ]; then
         return 0
     fi
-    
-    echo "ERROR: mysql client not found. Please install mysql-client package." >&2
-    return 1
+
+    _init_command_with_fallback mysql "$TOOLS_DIR/bin/mysql" "$TOOLS_DIR/lib" || return 1
+    TOOLS_MYSQL_TOOL_READY=1
+}
+
+# Initialize MySQL client.
+init_mysql_client() {
+    init_mysql_client_with_fallback "$@"
 }
