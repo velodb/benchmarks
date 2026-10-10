@@ -633,6 +633,23 @@ clear_doris_file_cache_on_be() {
     printf '%s\n' "$response"
 }
 
+clear_doris_segment_cache_on_be() {
+    local be="$1"
+    local http_port="${be_http_port:-8040}"
+    local url="http://${be}:${http_port}/api/clear_cache/SegmentCache"
+    local response
+    echo "[${be}] release SegmentCache before clearing file cache"
+    if ! curl_capture_or_log response "[${be}] clear SegmentCache via ${url}" \
+            -fsS -u "${user:-root}:${password:-}" -X GET "$url"; then
+        return 1
+    fi
+    if [[ "$response" != *"ClearCacheAction cache:SegmentCache prune win, freed size "* ]]; then
+        echo "[${be}] unexpected SegmentCache clear response" >&2
+        return 1
+    fi
+    printf '%s\n' "$response"
+}
+
 # Port of selectdb-qa ClearDorisFileCache:
 #   Clear Doris file cache using the benchmark DB credentials. Cloud clusters may
 #   reject unauthenticated cache-clear calls when the benchmark user is non-root.
@@ -647,6 +664,13 @@ clear_doris_file_cache() {
     max_bytes=$(awk -v g="$max_gb" 'BEGIN{printf "%.0f", g*1024*1024*1024}')
     local be
     for be in "${BE_HOSTS_ARR[@]}"; do
+        # CachedRemoteFileReader can retain FileBlock references through cached
+        # segments after a query finishes. File-cache clear only marks these
+        # blocks for recycling until the segment releases its reader.
+        if ! clear_doris_segment_cache_on_be "$be"; then
+            echo "clear SegmentCache failed on ${be}" >&2
+            return 1
+        fi
         if ! clear_doris_file_cache_on_be "$be"; then
             echo "clear file_cache failed on ${be}" >&2
             return 1
