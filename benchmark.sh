@@ -201,6 +201,10 @@ load_config() {
         die "Invalid YAML syntax in configuration file: $CONFIG_FILE"
     fi
 
+    if [ "$(yq eval '.paths.query_dirs // ""' "$CONFIG_FILE")" != "" ]; then
+        die "paths.query_dirs is no longer supported; use paths.query_dir"
+    fi
+
     # Export connection and parameters
     for section in "engine.connection" "parameters"; do
         while IFS='=' read -r key value; do
@@ -1179,6 +1183,15 @@ run_jmeter() {
     else
         die "JMeter not found. Please provide JMeter archive in tools directory or install it system-wide."
     fi
+
+    # Large result sets and high JDBC concurrency can exhaust JMeter's small
+    # default heap. Keep this overridable for constrained test clients.
+    if [ -z "${HEAP:-}" ]; then
+        export HEAP="-Xms2g -Xmx8g"
+        echo "Using default JMeter heap: ${HEAP}"
+    else
+        echo "Using configured JMeter heap: ${HEAP}"
+    fi
     
     # Execute JMeter in non-GUI mode
     if "$jmeter_cmd" \
@@ -1263,6 +1276,9 @@ main() {
     esac
     password="${password:-${PASSWORD:-}}"
     db="${db:-${DB:-}}"
+    # Stream-load scripts use the legacy uppercase DB variable. Derive it from
+    # the resolved lowercase database name when callers do not provide it.
+    export DB="${DB:-$db}"
     session="${session:-${SESSION:-true}}"
     load="${load:-${LOAD:-false}}"
     analyze="${analyze:-${ANALYZE:-false}}"
