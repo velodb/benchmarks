@@ -32,32 +32,62 @@ init_common_tools() {
 init_yq() {
     _init_tools_dir
     init_common_tools
-    
+
+    local machine_arch
+    machine_arch="$(uname -m)"
     local yq_dir="$TOOLS_DIR/yq_dir"
     local yq_binary="$yq_dir/yq"
     local yq_archive="$TOOLS_DIR/yq_linux_amd64.tar.gz"
+    local extracted_name="yq_linux_amd64"
+
+    case "$machine_arch" in
+        arm64|aarch64)
+            yq_dir="$TOOLS_DIR/yq_dir_arm64"
+            yq_binary="$yq_dir/yq"
+            yq_archive="$TOOLS_DIR/yq_linux_arm64.tar.gz"
+            extracted_name="yq_linux_arm64"
+            ;;
+    esac
     
     # Extract yq if archive exists and binary doesn't
     if [ ! -f "$yq_binary" ] && [ -f "$yq_archive" ]; then
         echo "Extracting yq..."
         mkdir -p "$yq_dir"
         tar -xzf "$yq_archive" -C "$yq_dir"
-        # The archive extracts to ./yq_linux_amd64, rename it to yq
-        if [ -f "$yq_dir/yq_linux_amd64" ]; then
-            mv "$yq_dir/yq_linux_amd64" "$yq_binary"
+        if [ -f "$yq_dir/${extracted_name}" ]; then
+            mv "$yq_dir/${extracted_name}" "$yq_binary"
         fi
     fi
-    
-    if [ -f "$yq_binary" ]; then
-        # Make it executable if needed
-        if [ ! -x "$yq_binary" ]; then
-            chmod +x "$yq_binary"
+
+    if [ ! -f "$yq_binary" ] && [[ "$machine_arch" == "arm64" || "$machine_arch" == "aarch64" ]]; then
+        local yq_arm64_url="${YQ_LINUX_ARM64_URL:-https://qa-build.oss-cn-beijing.aliyuncs.com/gzf/tmp/trusted/yq_linux_arm64}"
+        local curl_bin="/usr/bin/curl"
+        if [ ! -x "$curl_bin" ]; then
+            curl_bin="$(command -v curl)"
         fi
-        
+        echo "Downloading ARM64 yq from ${yq_arm64_url}"
+        mkdir -p "$yq_dir"
+        if ! "$curl_bin" --fail --silent --show-error --location \
+            --retry 3 --retry-delay 2 \
+            "$yq_arm64_url" -o "$yq_binary"; then
+            rm -f "$yq_binary"
+        fi
+    fi
+
+    if [ -f "$yq_binary" ] && [ ! -x "$yq_binary" ]; then
+        chmod +x "$yq_binary"
+    fi
+
+    if [ -x "$yq_binary" ] && "$yq_binary" --version >/dev/null 2>&1; then
+
         # Add yq directory to PATH
         export PATH="$yq_dir:$PATH"
         echo "Using local yq: $yq_binary"
         return 0
+    fi
+
+    if [ -f "$yq_binary" ]; then
+        echo "WARNING: incompatible local yq ignored: $yq_binary" >&2
     fi
     
     # Fall back to system yq
@@ -179,6 +209,8 @@ init_mysql_client() {
     _init_tools_dir
     init_common_tools
 
+    local machine_arch
+    machine_arch="$(uname -m)"
     local mysql_dir="$TOOLS_DIR/mysql_client_dir"
     local mysql_binary="$mysql_dir/bin/mysql"
     local mysql_archive="$TOOLS_DIR/mysql_client_dir.tar.gz"
@@ -189,7 +221,8 @@ init_mysql_client() {
         tar -xzf "$mysql_archive" -C "$TOOLS_DIR"
     fi
 
-    if [ -x "$mysql_binary" ]; then
+    if [[ "$machine_arch" != "arm64" && "$machine_arch" != "aarch64" ]] \
+        && [ -x "$mysql_binary" ]; then
         export PATH="$mysql_dir/bin:$PATH"
         if [ -d "$mysql_dir/lib" ]; then
             export LD_LIBRARY_PATH="$mysql_dir/lib:${LD_LIBRARY_PATH:-}"
@@ -198,8 +231,16 @@ init_mysql_client() {
         return 0
     fi
 
-    if [ -x "$TOOLS_DIR/bin/mysql" ]; then
+    if [[ "$machine_arch" != "arm64" && "$machine_arch" != "aarch64" ]] \
+        && [ -x "$TOOLS_DIR/bin/mysql" ]; then
         echo "Using local mysql client: $TOOLS_DIR/bin/mysql"
+        return 0
+    fi
+
+    if [[ "$machine_arch" == "arm64" || "$machine_arch" == "aarch64" ]] \
+        && [ -x "/usr/bin/mysql" ]; then
+        export PATH="/usr/bin:/bin:${PATH}"
+        echo "Using system mysql client"
         return 0
     fi
 
