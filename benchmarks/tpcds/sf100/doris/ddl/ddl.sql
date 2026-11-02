@@ -639,3 +639,13 @@ distributed by hash(web_site_sk) buckets 1
 properties(
     "replication_num" = "1"
 );
+
+-- Primary and unique key constraints from the TPC-DS SF1000 Doris suite.
+alter table item add constraint i_pk primary key (i_item_sk);
+alter table customer add constraint c_pk primary key (c_customer_sk);
+alter table customer add constraint c_uk unique (c_customer_id);
+
+-- Foreign key constraints from the TPC-DS SF1000 Doris suite.
+alter table store_sales add constraint ss_c_fk foreign key(ss_customer_sk) references customer(c_customer_sk);
+alter table web_sales add constraint ws_c_fk foreign key(ws_bill_customer_sk) references customer(c_customer_sk);
+alter table catalog_sales add constraint cs_c_fk foreign key(cs_bill_customer_sk) references customer(c_customer_sk);
