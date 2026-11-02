@@ -107,6 +107,61 @@ engine_run_sql_file() {
     fi
 }
 
+# 2.0. Execute DDL on the coordinator and optional ClickHouse cluster workers.
+engine_run_ddl_file() {
+    local sql_file="$1"
+    local cluster_name="${ddl_cluster:-}"
+    local target_host
+    local cluster_host
+    local worker_hosts=""
+    local -a hosts=("$clickhouse_host")
+    local -a discovery_args=(
+        "--host=$clickhouse_host"
+        "--user=$user"
+    )
+
+    if [[ -n "$cluster_name" ]]; then
+        if [[ ! "$cluster_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+            echo "ERROR: Invalid ClickHouse DDL cluster name: $cluster_name" >&2
+            return 1
+        fi
+        if [ -n "${password:-}" ]; then
+            discovery_args+=("--secure" "--password=$password")
+        fi
+        if ! worker_hosts="$($CLICKHOUSE_CMD "${discovery_args[@]}" \
+            --query="SELECT DISTINCT host_name FROM system.clusters WHERE cluster = '$cluster_name' ORDER BY host_name")"; then
+            echo "ERROR: Failed to discover workers in ClickHouse cluster: $cluster_name" >&2
+            return 1
+        fi
+        while IFS= read -r cluster_host; do
+            if [[ "$cluster_host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+                && [[ " ${hosts[*]} " != *" $cluster_host "* ]]; then
+                hosts+=("$cluster_host")
+            fi
+        done <<< "$worker_hosts"
+        if [ "${#hosts[@]}" -eq 1 ]; then
+            echo "ERROR: No workers found in ClickHouse cluster: $cluster_name" >&2
+            return 1
+        fi
+    fi
+
+    for target_host in "${hosts[@]}"; do
+        local -a args=(
+            "--host=$target_host"
+            "--user=$user"
+            "--database=$db"
+        )
+        if [ -n "${password:-}" ]; then
+            args+=("--secure" "--password=$password")
+        fi
+        echo "Executing DDL on ClickHouse node ${target_host}."
+        if ! $CLICKHOUSE_CMD "${args[@]}" --multiquery < "$sql_file"; then
+            echo "ERROR: Failed to execute DDL on ClickHouse node: $target_host" >&2
+            return 1
+        fi
+    done
+}
+
 # 2.1. Execute a SQL statement using clickhouse client
 engine_run_sql() {
     local db="$1"

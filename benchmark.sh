@@ -290,8 +290,12 @@ init_engine() {
 
 # Run DDL setup
 run_ddl() {
-    if ! engine_create_database; then
-        die "Database creation failed"
+    local engine_type_lower
+    engine_type_lower="$(to_lower "${ENGINE_TYPE:-}")"
+    if [[ "$engine_type_lower" != "trino" ]]; then
+        if ! engine_create_database; then
+            die "Database creation failed"
+        fi
     fi
 
     local ddl_file="${DDL:-ddl/ddl.sql}"
@@ -313,7 +317,13 @@ run_ddl() {
     create_temp_sql_file "ddl"
     tmp_sql="$LAST_TEMP_FILE"
     envsubst < "$ddl_file" > "$tmp_sql"
-    if ! engine_run_sql_file "$tmp_sql" false; then
+    local ddl_status=0
+    if type -t engine_run_ddl_file >/dev/null; then
+        engine_run_ddl_file "$tmp_sql" || ddl_status=$?
+    else
+        engine_run_sql_file "$tmp_sql" false || ddl_status=$?
+    fi
+    if [ "$ddl_status" -ne 0 ]; then
         rm -f "$tmp_sql"
         die "DDL setup failed"
     fi
@@ -923,11 +933,12 @@ run_query() {
 
 
 run_analyze() {
-    if run_builtin_analyze; then
+    local builtin_rc=0
+    run_builtin_analyze || builtin_rc=$?
+    if [ "$builtin_rc" -eq 0 ]; then
         return 0
     fi
 
-    local builtin_rc=$?
     if [ "$builtin_rc" -eq 2 ]; then
         echo "Built-in analyze is unavailable for this engine, fallback to analyze SQL file."
         if run_analyze_with_sql_file; then
@@ -991,17 +1002,28 @@ run_analyze_with_sql_file() {
 }
 
 run_builtin_analyze() {
+    local engine_type_lower
+    engine_type_lower="$(to_lower "${ENGINE_TYPE:-}")"
+    if [[ "$engine_type_lower" != "doris" \
+        && "$engine_type_lower" != "starrocks" \
+        && "$engine_type_lower" != "trino" ]]; then
+        echo "Built-in analyze is supported only for doris/starrocks/trino, current engine: ${ENGINE_TYPE}" >&2
+        return 2
+    fi
+
+    # Normalize analyze_type to lowercase for robust matching
+    analyze_type="$(to_lower "${analyze_type:-${ANALYZE_TYPE:-analyze_full}}")"
+    if [[ "$engine_type_lower" == "trino" \
+        && "$analyze_type" != "analyze_full" \
+        && "$analyze_type" != "analyze_no" ]]; then
+        echo "Analyze type ${analyze_type} is not supported for Trino" >&2
+        return 2
+    fi
+
     local target_db="${db:-}"
     if [ -z "$target_db" ]; then
         echo "Database is empty, cannot run built-in analyze" >&2
         return 1
-    fi
-
-    local engine_type_lower
-    engine_type_lower="$(to_lower "${ENGINE_TYPE:-}")"
-    if [[ "$engine_type_lower" != "doris" && "$engine_type_lower" != "starrocks" ]]; then
-        echo "Built-in analyze is supported only for doris/starrocks, current engine: ${ENGINE_TYPE}" >&2
-        return 2
     fi
 
     local tables_output
@@ -1019,8 +1041,6 @@ run_builtin_analyze() {
         [ -n "$table_entry" ] && tables+=("$table_entry")
     done < <(printf '%s\n' "$tables_output" | awk 'NF > 0')
 
-    # Normalize analyze_type to lowercase for robust matching
-    analyze_type="$(to_lower "${analyze_type:-${ANALYZE_TYPE:-analyze_full}}")"
     local analyze_csv="$RESULT_DIR/analyze.csv"
 
     echo "Running built-in analysis (type: ${analyze_type})..."
@@ -1041,16 +1061,18 @@ run_builtin_analyze() {
             sleep 600
         ;;
         analyze_full|analyze_sample)
-            local disable_output
-            if ! disable_output=$(engine_set_auto_analyze "false" 2>&1); then
-                if [[ "$disable_output" == *"not supported"* ]]; then
-                    return 2
+            if [[ "$engine_type_lower" != "trino" ]]; then
+                local disable_output
+                if ! disable_output=$(engine_set_auto_analyze "false" 2>&1); then
+                    if [[ "$disable_output" == *"not supported"* ]]; then
+                        return 2
+                    fi
+                    echo "$disable_output" >&2
+                    return 1
                 fi
-                echo "$disable_output" >&2
-                return 1
-            fi
 
-            sleep 60
+                sleep 60
+            fi
 
             local table
             for table in "${tables[@]}"; do
@@ -1089,13 +1111,15 @@ run_builtin_analyze() {
             done
         ;;
         analyze_no)
-            local disable_output
-            if ! disable_output=$(engine_set_auto_analyze "false" 2>&1); then
-                if [[ "$disable_output" == *"not supported"* ]]; then
-                    return 2
+            if [[ "$engine_type_lower" != "trino" ]]; then
+                local disable_output
+                if ! disable_output=$(engine_set_auto_analyze "false" 2>&1); then
+                    if [[ "$disable_output" == *"not supported"* ]]; then
+                        return 2
+                    fi
+                    echo "$disable_output" >&2
+                    return 1
                 fi
-                echo "$disable_output" >&2
-                return 1
             fi
 
             local table
@@ -1393,7 +1417,7 @@ main() {
     
     # Run benchmark workflow
     echo "Starting benchmark: $ENGINE_TYPE"
-    # 1. Run DDL first so the database and tables exist
+    # 1. Run DDL as part of the load phase so external tables can be initialized.
     if [[ "$load" == "true" ]]; then
         run_ddl
     fi

@@ -41,6 +41,15 @@ engine_run_sql_file() {
     return 1
 }
 
+# Optional: Execute a DDL SQL file with engine-specific fan-out.
+# If implemented, benchmark.sh calls this instead of engine_run_sql_file for DDL.
+#
+# @param $1: Absolute path to the DDL SQL file
+# @return: 0 on success, non-zero on failure
+engine_run_ddl_file() {
+    engine_run_sql_file "$1" false
+}
+
 # 2.1. Execute a SQL statement
 #    This function executes a single SQL statement against the target database.
 #    It should handle connection parameters and error reporting.

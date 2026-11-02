@@ -1,14 +1,18 @@
 THIRDPATY_URL ?= https://bench-dataset.oss-cn-beijing.aliyuncs.com/thirdpaty/benchmark_thirdpaty.tar.gz
 
-.PHONY: help result dist clean thirdpaty
+.PHONY: help test result dist clean thirdpaty
 help:
 	@echo "Available targets:"
+	@echo "  test            - Run benchmark workflow tests"
 	@echo "  result          - Generate the benchmark results HTML report"
 	@echo "  dist            - Create a tar.gz archive of the benchmarks"
 	@echo "  clean           - Remove generated benchmark archive"
 	@echo "  thirdpaty       - Download and extract third-party tools"
 	@echo "                   Override with THIRDPATY_URL=<url>"
 	@echo "  help            - Show this help message"
+
+test:
+	bash tests/test_benchmark_workflow.sh
 
 
 result:
