@@ -23,7 +23,7 @@ parameters:
   threads: "${JMETER_THREADS:-50}" # Number of JMeter threads
   loops: "${JMETER_LOOPS:-1}" # Number of loops per thread
   duration: "${JMETER_DURATION:-180}" # Test duration in seconds (0 = use loops)
-  query_by_query: "${QUERY_BY_QUERY:-true}" # Run queries one by one (true) or concurrently with random selection (false)
+  query_by_query: "${QUERY_BY_QUERY:-false}" # Run queries one by one (true) or concurrently with random selection (false)
 
 # Test resource paths (relative to this YAML file)
 paths:
