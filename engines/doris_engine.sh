@@ -623,14 +623,46 @@ clear_doris_file_cache_on_be() {
     local auth_user="${user:-root}"
     local auth_password="${password:-}"
     local url="http://${be}:${http_port}/api/file_cache?op=clear&sync=true"
-    local response
+    local response body http_status method
 
-    echo "[${be}] GET ${url} (${label})"
-    if ! curl_capture_or_log response "[${be}] clear file_cache via ${url}" \
-            -fsS -u "${auth_user}:${auth_password}" -X GET "$url"; then
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "python3 is required to validate file cache clear responses" >&2
         return 1
     fi
-    printf '%s\n' "$response"
+
+    # Cloud registers GET; local Doris registers POST on the same HTTP port.
+    # Retry only a method/route mismatch, never authentication or server errors.
+    for method in GET POST; do
+        echo "[${be}] ${method} ${url} (${label})"
+        if ! curl_capture_or_log response "[${be}] clear file_cache via ${url}" \
+                -sS -u "${auth_user}:${auth_password}" -X "$method" \
+                -w '\n%{http_code}' "$url"; then
+            return 1
+        fi
+        http_status="${response##*$'\n'}"
+        body="${response%$'\n'*}"
+        if [[ "$method" == "GET" && ( "$http_status" == "404" || "$http_status" == "405" ) ]]; then
+            continue
+        fi
+        if [[ "$http_status" != "200" ]]; then
+            echo "[${be}] ${method} file_cache clear failed (HTTP ${http_status})" >&2
+            return 1
+        fi
+        if ! printf '%s' "$body" | python3 -c '
+import json, sys
+try:
+    response = json.load(sys.stdin)
+except (ValueError, TypeError):
+    sys.exit(1)
+sys.exit(0 if isinstance(response, dict) and response.get("status") == "OK" else 1)
+'; then
+            echo "[${be}] file_cache clear did not return JSON status=OK" >&2
+            return 1
+        fi
+        printf '%s\n' "$body"
+        return 0
+    done
+    return 1
 }
 
 # Port of selectdb-qa ClearDorisFileCache:
