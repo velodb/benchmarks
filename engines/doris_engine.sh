@@ -297,6 +297,8 @@ engine_run_sql() {
         return 1
     fi
     
+    sql_statement="$(engine_prepend_session_sql "$sql_statement")" || return $?
+
     # Set password environment variable for mysql
     export MYSQL_PWD="${password:-}"
     
@@ -406,8 +408,9 @@ engine_analyze_table() {
         ;;
     esac
 
+    sql="$(engine_prepend_session_sql "${sql};")" || return $?
     export MYSQL_PWD="${password:-}"
-    mysql "${args[@]}" -e "${sql};" 2>&1
+    mysql "${args[@]}" -e "$sql" 2>&1
 }
 
 engine_show_column_stats() {

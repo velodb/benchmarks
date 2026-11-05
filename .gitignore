@@ -2,3 +2,7 @@ benchmarks.tar.gz
 tools/
 /results/
 .conversations/
+
+# Python benchmark tooling
+__pycache__/
+*.pyc

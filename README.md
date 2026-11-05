@@ -104,6 +104,12 @@ Our goal is to build `velodb.github.io/benchmarks` into the industry's most trus
      runs do not clear cache, and the hot summary uses the minimum hot time.
     Results are saved in the `results` directory under the corresponding path.
 
+### Retained-output Iceberg cases
+
+For dedicated single-BE Doris/StarRocks measurements with verified local data-I/O
+cold state, Full Analyze, fixed-session readback, and typed results for every
+round, see [scripts/iceberg](scripts/iceberg/README.md).
+
 ### View Results
 
 ```bash
