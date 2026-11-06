@@ -1,6 +1,8 @@
 """Prepare data-I/O cold state without changing the enabled cache budgets."""
 import base64
 import json
+import os
+from pathlib import Path
 import subprocess
 import time
 import urllib.error
@@ -100,11 +102,26 @@ def clear_starrocks(backend, saved):
 
 
 def drop_os_cache(host, ssh_user='root'):
-    # Dedicated benchmark hosts only. This never runs between the two hot queries.
-    result = subprocess.run(
-        ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', f'{ssh_user}@{host}',
-         'sync && sudo -n sh -c "echo 3 > /proc/sys/vm/drop_caches"'],
-        capture_output=True, text=True, timeout=60)
+    # A private password file is optional; no remote authorized_keys are changed.
+    args = ['ssh', '-o', 'ConnectTimeout=10']
+    password_file = os.environ.get('ICEBERG_SSH_PASSWORD_FILE')
+    known_hosts = os.environ.get('ICEBERG_SSH_KNOWN_HOSTS_FILE')
+    if known_hosts:
+        args += ['-o', 'UserKnownHostsFile=' + known_hosts, '-o', 'StrictHostKeyChecking=accept-new']
+    else:
+        args += ['-o', 'StrictHostKeyChecking=yes']
+    args += ['-o', 'NumberOfPasswordPrompts=1', f'{ssh_user}@{host}',
+             'sync && sudo -n sh -c "echo 3 > /proc/sys/vm/drop_caches"']
+    if password_file:
+        path = Path(password_file)
+        if path.stat().st_mode & 0o077:
+            raise ValueError('SSH password file must have private permissions')
+        with path.open('rb') as secret:
+            result = subprocess.run(['sshpass', '-d', str(secret.fileno()), *args],
+                                    pass_fds=(secret.fileno(),), capture_output=True, text=True, timeout=60)
+    else:
+        args[1:1] = ['-o', 'BatchMode=yes']
+        result = subprocess.run(args, capture_output=True, text=True, timeout=60)
     if result.returncode:
         raise RuntimeError('OS cache clear failed: ' + result.stderr)
     return {'returncode': result.returncode, 'host': host}

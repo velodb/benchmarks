@@ -200,7 +200,7 @@ class Runner:
             record['started_at'] = stamp()
             start = time.monotonic()
             try:
-                description, rows = self.query(connection, sql_file.read_text())
+                description, rows = self.query(connection, sql_file.read_bytes().decode('utf-8'))
                 record.update(status='SUCCESS', elapsed_s=time.monotonic() - start,
                               **result_codec.fingerprints(rows, len(description)))
             except Exception as error:

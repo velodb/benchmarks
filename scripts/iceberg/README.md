@@ -53,3 +53,16 @@ Tests (no live database or cache mutation):
 ```sh
 python3 -m unittest discover -s tests -p 'test_iceberg_runner.py' -v
 ```
+
+## Postflight Profiles
+
+`profiles.py --plan plan.json --formal-output formal --output diagnostics --lock-file queue.lock`
+collects one Profile-off warmup and one level-2 Profile per frozen query after a successful
+formal suite. It preserves EXPLAIN, raw typed outputs, Query IDs, hashes and snapshot checks;
+diagnostic elapsed times do not replace formal measurements. Exact-match flags remain visible;
+the caller owns any explicitly defined numeric compatibility policy.
+
+For dedicated QA hosts without preinstalled client keys, `ICEBERG_SSH_PASSWORD_FILE` may point
+to a mode-0600 file used through an inherited sshpass file descriptor. An optional per-workspace
+`ICEBERG_SSH_KNOWN_HOSTS_FILE` accepts a new host key once and rejects changed keys; no remote
+authorized_keys are modified. The default continues to use existing keys and strict host checking.

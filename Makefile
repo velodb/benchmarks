@@ -13,7 +13,7 @@ help:
 
 test:
 	bash tests/test_benchmark_workflow.sh
-	python3 -m unittest discover -s tests -p 'test_iceberg_runner.py'
+	python3 -m unittest discover -s tests -p 'test_iceberg_*.py'
 
 
 result:
