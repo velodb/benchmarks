@@ -90,7 +90,7 @@ class Runner:
             config = json.load(response)
         options = {**config.get('defaults', {}), **config.get('overrides', {})}
         prefix = options.get('prefix', '')
-        root = uri + ('/' + urllib.parse.quote(prefix.strip('/'), safe='/') if prefix else '')
+        root = uri + ('/' + urllib.parse.quote(prefix.strip('/'), safe='/%') if prefix else '')
         found = {}
         namespace = urllib.parse.quote(self.plan['namespace'], safe='')
         for table, expected in self.plan['tables'].items():

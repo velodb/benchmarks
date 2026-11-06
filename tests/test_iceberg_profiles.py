@@ -76,6 +76,21 @@ class ProfileTests(unittest.TestCase):
             self.assertEqual(tool.execute(source,1)['status'],'SUCCESS')
             self.assertEqual(calls[0],'SELECT 1;\r\n')
 
+    def test_rest_prefix_is_not_double_encoded(self):
+        import io
+        for prefix in ['main%7Cwarehouse', 'main|warehouse']:
+            tool=object.__new__(runner.Runner)
+            tool.plan={'rest':{'uri':'http://rest/iceberg','warehouse':'warehouse'},'namespace':'dataset',
+                       'tables':{'table':{'snapshot_id':123}}}
+            requests=[]
+            def request(url,**kwargs):
+                requests.append(url)
+                if '/config?' in url:return io.BytesIO(json.dumps({'overrides':{'prefix':prefix}}).encode())
+                self.assertEqual(url,'http://rest/iceberg/v1/main%7Cwarehouse/namespaces/dataset/tables/table')
+                return io.BytesIO(b'{"metadata":{"current-snapshot-id":123}}')
+            with patch.object(runner.urllib.request,'urlopen',side_effect=request):self.assertEqual(tool.snapshots(),{'table':123})
+            self.assertEqual(len(requests),2)
+
     def test_private_ssh_secret_is_passed_by_file_descriptor(self):
         with tempfile.TemporaryDirectory() as tmp:
             p=Path(tmp)/'password';p.write_text('test-only-password\n');p.chmod(0o600)
