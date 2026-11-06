@@ -91,6 +91,20 @@ class ProfileTests(unittest.TestCase):
             with patch.object(runner.urllib.request,'urlopen',side_effect=request):self.assertEqual(tool.snapshots(),{'table':123})
             self.assertEqual(len(requests),2)
 
+    def test_starrocks_stats_read_uses_internal_catalog_after_external_use(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            class Tool(runner.Runner):
+                def query(self,c,sql):return None,[]
+                def configure(self,c):pass
+                def dicts(self,c,sql):
+                    if sql.startswith('DESC '):return [{'Field':'value'}]
+                    if 'FROM default_catalog._statistics_.external_column_statistics ' not in sql:
+                        raise RuntimeError('Statistics resolved in current external catalog')
+                    return [{'column_name':'value','stat_rows':7,'ndv':3,'num_null':0,'partition_rows':1}]
+            tool=object.__new__(Tool);tool.engine='starrocks';tool.output=Path(tmp)
+            tool.plan={'catalog':'external_catalog','namespace':'dataset','tables':{'table':{'row_count':7,'snapshot_id':42}}}
+            self.assertEqual(tool.analyze(object())['state'],'statistics_verified')
+
     def test_private_ssh_secret_is_passed_by_file_descriptor(self):
         with tempfile.TemporaryDirectory() as tmp:
             p=Path(tmp)/'password';p.write_text('test-only-password\n');p.chmod(0o600)

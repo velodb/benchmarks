@@ -160,7 +160,7 @@ class Runner:
                 catalog = identifier(self.plan['catalog']).strip('`')
                 namespace = identifier(self.plan['namespace']).strip('`')
                 name = identifier(table).strip('`')
-                stats = self.dicts(connection, "SELECT column_name,SUM(row_count) AS stat_rows,MAX(hll_cardinality(ndv)) AS ndv,SUM(null_count) AS num_null,COUNT(*) AS partition_rows FROM _statistics_.external_column_statistics "
+                stats = self.dicts(connection, "SELECT column_name,SUM(row_count) AS stat_rows,MAX(hll_cardinality(ndv)) AS ndv,SUM(null_count) AS num_null,COUNT(*) AS partition_rows FROM default_catalog._statistics_.external_column_statistics "
                                    f"WHERE catalog_name='{catalog}' AND db_name='{namespace}' AND table_name='{name}' GROUP BY column_name")
                 valid = {r['column_name'] for r in stats} == columns and all(
                     int(r['partition_rows']) == 1 and int(r['stat_rows']) == expected['row_count']
